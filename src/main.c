@@ -15,6 +15,10 @@ int main(int argc, char *argv[]) {
     } else if (strcmp(argv[1], "--smart") == 0 && argc > 2) {
         smart_read(argv[2]);
         smart_interpret(argv[2]);
+    } else if (strcmp(argv[1], "--scan-quick") == 0 && argc > 2) {
+        surface_scan_quick(argv[2]);
+    } else if (strcmp(argv[1], "--scan-deep") == 0 && argc > 2) {
+        surface_scan_deep(argv[2]);
     } else {
         printf("Unknown command.\n");
     }
