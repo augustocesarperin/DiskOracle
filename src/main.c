@@ -19,6 +19,8 @@ int main(int argc, char *argv[]) {
         surface_scan_quick(argv[2]);
     } else if (strcmp(argv[1], "--scan-deep") == 0 && argc > 2) {
         surface_scan_deep(argv[2]);
+    } else if (strcmp(argv[1], "--report") == 0 && argc > 3) {
+        report_generate(argv[2], argv[3]);
     } else {
         printf("Unknown command.\n");
     }
