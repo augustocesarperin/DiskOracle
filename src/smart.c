@@ -1,178 +1,271 @@
 #include "smart.h"
-
-#include <fcntl.h>
-#include <unistd.h>
-#include <sys/ioctl.h>
-#include <linux/hdreg.h>
-#include <linux/types.h>
-#include <scsi/sg.h>
+#include "pal.h"
 #include <stdio.h>
 #include <string.h>
-
-#define ATA_SMART_CMD 0xB0
-#define ATA_SMART_READ_DATA 0xD0
-#define ATA_IDENTIFY_DEVICE 0xEC
-#define SG_ATA_16 0x85
-#define SG_CDB_LEN 16
-#define SG_IO_HDR_SIZE sizeof(struct sg_io_hdr)
-
-static int is_nvme(const char *device) {
-    return strstr(device, "nvme") != NULL;
-}
+#include <stdint.h>
 
 int smart_read(const char *device, struct smart_data *out) {
-    if (is_nvme(device)) {
-        int fd = open(device, O_RDWR);
-        if (fd < 0) return 1;
-        unsigned char nvme_log[512];
-        memset(nvme_log, 0, sizeof(nvme_log));
-        struct {
-            __u8 opcode;
-            __u8 flags;
-            __u16 rsvd1;
-            __u32 nsid;
-            __u64 rsvd2[2];
-            __u64 metadata;
-            __u64 addr;
-            __u32 data_len;
-            __u32 cdw10;
-            __u32 cdw11;
-            __u32 cdw12;
-            __u32 cdw13;
-            __u32 cdw14;
-            __u32 cdw15;
-            __u32 timeout_ms;
-            __u32 result;
-        } cmd;
-        memset(&cmd, 0, sizeof(cmd));
-        cmd.opcode = 0x02;
-        cmd.addr = (__u64)(uintptr_t)nvme_log;
-        cmd.data_len = sizeof(nvme_log);
-        cmd.nsid = 0xFFFFFFFF;
-        cmd.cdw10 = (0x02 << 16) | (sizeof(nvme_log) / 4);
-        int err = ioctl(fd, 0xC0484E41, &cmd);
-        close(fd);
-        if (err < 0) return 1;
-        out->is_nvme = 1;
-        out->nvme.critical_warning = nvme_log[0];
-        out->nvme.temperature = nvme_log[1] | (nvme_log[2]<<8);
-        out->nvme.avail_spare = nvme_log[3];
-        out->nvme.spare_thresh = nvme_log[4];
-        out->nvme.percent_used = nvme_log[5];
-        out->nvme.data_units_read = *(uint64_t*)&nvme_log[32];
-        out->nvme.data_units_written = *(uint64_t*)&nvme_log[48];
-        out->nvme.host_reads = *(uint64_t*)&nvme_log[64];
-        out->nvme.host_writes = *(uint64_t*)&nvme_log[80];
-        out->nvme.power_cycles = *(uint64_t*)&nvme_log[96];
-        out->nvme.power_on_hours = *(uint64_t*)&nvme_log[104];
-        out->nvme.unsafe_shutdowns = *(uint64_t*)&nvme_log[112];
-        out->nvme.media_errors = *(uint64_t*)&nvme_log[120];
-        out->nvme.num_err_log_entries = *(uint64_t*)&nvme_log[128];
-        return 0;
-    }
-    int fd = open(device, O_RDWR | O_NONBLOCK);
-    if (fd < 0) {
-        perror("open");
+    if (!device || !out) {
+        fprintf(stderr, "Oops! smart_read needs a valid device and output structure.\\n");
         return 1;
     }
-    unsigned char cdb[SG_CDB_LEN];
-    memset(cdb, 0, SG_CDB_LEN);
-    cdb[0] = SG_ATA_16;
-    cdb[1] = 0x08;
-    cdb[2] = ATA_SMART_CMD;
-    cdb[4] = ATA_SMART_READ_DATA;
-    cdb[6] = 0x4F;
-    cdb[8] = 0xC2;
-    cdb[14] = ATA_SMART_CMD;
-    unsigned char data[512];
-    memset(data, 0, sizeof(data));
-    struct sg_io_hdr io_hdr;
-    memset(&io_hdr, 0, sizeof(io_hdr));
-    io_hdr.interface_id = 'S';
-    io_hdr.cmd_len = SG_CDB_LEN;
-    io_hdr.mx_sb_len = 0;
-    io_hdr.dxfer_direction = SG_DXFER_FROM_DEV;
-    io_hdr.dxfer_len = sizeof(data);
-    io_hdr.dxferp = data;
-    io_hdr.cmdp = cdb;
-    io_hdr.timeout = 5000;
-    int ret = ioctl(fd, SG_IO, &io_hdr);
-    if (ret < 0) {
-        perror("ioctl SG_IO");
-        close(fd);
-        return 1;
+    memset(out, 0, sizeof(struct smart_data));
+    return pal_get_smart_data(device, out);
+}
+
+static uint64_t raw_to_uint64(const unsigned char* raw_value) {
+    uint64_t result = 0;
+    for (int i = 0; i < 6; ++i) {
+        result |= ((uint64_t)raw_value[i] << (i * 8));
     }
-    close(fd);
-    int count = 0;
-    for (int i = 2; i + 12 <= 362 && count < 30; i += 12) {
-        uint8_t id = data[i];
-        if (id == 0) continue;
-        out->attrs[count].id = id;
-        out->attrs[count].flags = data[i+1] | (data[i+2]<<8);
-        out->attrs[count].value = data[i+3];
-        out->attrs[count].worst = data[i+4];
-        memcpy(out->attrs[count].raw, &data[i+5], 6);
-        count++;
-    }
-    out->attr_count = count;
-    out->is_nvme = 0;
-    return 0;
+    return result;
 }
 
 int smart_interpret(const char *device, struct smart_data *data) {
+    if (!data) {
+        fprintf(stderr, "Hmm, DiskOracle couldn't find any SMART data for %s. That's unexpected.\n", device);
+        return 1;
+    }
+
+    printf("\n========= DiskOracle SMART Data Report for %s =========\n", device);
+
     if (data->is_nvme) {
-        printf("Diagnóstico SMART NVMe para %s:\n", device);
-        printf("Critical Warning: 0x%02X\n", data->nvme.critical_warning);
-        printf("Temperature: %u K (%.2f °C)\n", data->nvme.temperature, data->nvme.temperature - 273.15);
-        printf("Available Spare: %u%%\n", data->nvme.avail_spare);
-        printf("Spare Threshold: %u%%\n", data->nvme.spare_thresh);
-        printf("Percentage Used: %u%%\n", data->nvme.percent_used);
-        printf("Power On Hours: %llu\n", data->nvme.power_on_hours);
-        printf("Unsafe Shutdowns: %llu\n", data->nvme.unsafe_shutdowns);
-        printf("Media Errors: %llu\n", data->nvme.media_errors);
-        printf("Data Units Read: %llu\n", data->nvme.data_units_read);
-        printf("Data Units Written: %llu\n", data->nvme.data_units_written);
-        if (data->nvme.percent_used > 90)
-            printf("ALERTA: SSD NVMe próximo do fim da vida útil!\n");
-        if (data->nvme.critical_warning)
-            printf("ALERTA: Critical Warning ativo!\n");
-        if (data->nvme.media_errors > 0)
-            printf("ALERTA: Media Errors detectados!\n");
-        return 0;
+        printf("Drive Type: NVMe SSD - Reporting NVMe Specific Health Log!\\n\\n");
+        printf("  Key Health Indicators:\\n");
+        printf("  ----------------------\\n");
+        printf("  [ Critical Warning Flags ] --> 0x%02X\\n", data->nvme.critical_warning);
+        printf("     Bit 0 (Available Spare Below Threshold): %s\\n", (data->nvme.critical_warning & 0x01) ? "ALERT!" : "OK");
+        printf("     Bit 1 (Temperature Above Threshold)  : %s\\n", (data->nvme.critical_warning & 0x02) ? "ALERT!" : "OK");
+        printf("     Bit 2 (Reliability Degraded)         : %s\\n", (data->nvme.critical_warning & 0x04) ? "ALERT!" : "OK");
+        printf("     Bit 3 (Media Read-Only)              : %s\\n", (data->nvme.critical_warning & 0x08) ? "ALERT!" : "OK");
+        printf("     Bit 4 (Volatile Memory Backup Failed): %s\\n", (data->nvme.critical_warning & 0x10) ? "ALERT!" : "OK");
+        printf("\\n");
+        printf("  [ Composite Temperature ] --> %u K (Kelvin)\\n", data->nvme.temperature);
+        printf("  [ Available Spare Space ] --> %u %%\\n", data->nvme.avail_spare);
+        printf("  [ Spare Space Threshold ] --> %u %%\\n", data->nvme.spare_thresh);
+        printf("  [ Percentage Used       ] --> %u %%\\n", data->nvme.percent_used);
+        printf("\\n  Usage Statistics:\\n");
+        printf("  -----------------\\n");
+        printf("  [ Data Units Read       ] --> %llu (x512k blocks)\\n", (unsigned long long)data->nvme.data_units_read);
+        printf("  [ Data Units Written    ] --> %llu (x512k blocks)\\n", (unsigned long long)data->nvme.data_units_written);
+        printf("  [ Host Read Commands    ] --> %llu\\n", (unsigned long long)data->nvme.host_reads);
+        printf("  [ Host Write Commands   ] --> %llu\\n", (unsigned long long)data->nvme.host_writes);
+        printf("  [ Controller Busy Time  ] --> %llu minutes\\n", (unsigned long long)data->nvme.controller_busy_time);
+        printf("  [ Power Cycles          ] --> %llu\\n", (unsigned long long)data->nvme.power_cycles);
+        printf("  [ Power On Hours        ] --> %llu hours\\n", (unsigned long long)data->nvme.power_on_hours);
+        printf("  [ Unsafe Shutdowns      ] --> %llu\\n", (unsigned long long)data->nvme.unsafe_shutdowns);
+        printf("  [ Media & Data Integrity Errors ] --> %llu\\n", (unsigned long long)data->nvme.media_errors);
+        printf("  [ Number of Error Info Log Entries ] --> %llu\\n", (unsigned long long)data->nvme.num_err_log_entries);
+        printf("\\n");
+
+    } else {
+        printf("Drive Type: ATA/SATA - Reporting Classic SMART Attributes!\\n\\n");
+        printf("  ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH RAW_VALUE           STATUS\\n");
+        printf("  ------------------------------------------------------------------------------------\\n");
+
+        for (int i = 0; i < data->attr_count; ++i) {
+            struct smart_attribute *attr = &data->attrs[i];
+            char *name = "Unknown";
+            const char* status_str = (attr->value > 0 && attr->threshold > 0 && attr->value <= attr->threshold) ? "FAILING" : "OK";
+            if (attr->value == 0 && attr->threshold == 0 && attr->worst == 0) {
+                status_str = "INFO";
+            }
+
+            switch (attr->id) {
+                case 1: name = "Raw_Read_Error_Rate"; break;
+                case 2: name = "Throughput_Performance"; break;
+                case 3: name = "Spin_Up_Time"; break;
+                case 4: name = "Start_Stop_Count"; break;
+                case 5: name = "Reallocated_Sector_Ct"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 7: name = "Seek_Error_Rate"; break;
+                case 8: name = "Seek_Time_Performance"; break;
+                case 9: name = "Power_On_Hours"; break;
+                case 10: name = "Spin_Retry_Count"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 11: name = "Calibration_Retry_Count"; break;
+                case 12: name = "Power_Cycle_Count"; break;
+                case 13: name = "Read_Soft_Error_Rate"; break;
+                case 168: name = "SATA_Phy_Error_Count"; break;
+                case 170: name = "Reserve_Block_Count"; break;
+                case 171: name = "Program_Fail_Count"; break;
+                case 172: name = "Erase_Fail_Count"; break;
+                case 173: name = "Wear_Leveling_Count"; break;
+                case 174: name = "Unexpected_Power_Loss_Ct"; break;
+                case 175: name = "Program_Fail_Count_Chip"; break;
+                case 176: name = "Erase_Fail_Count_Chip"; break;
+                case 177: name = "Wear_Range_Delta"; break;
+                case 179: name = "Used_Rsvd_Blk_Cnt_Tot"; break;
+                case 180: name = "Unused_Rsvd_Blk_Cnt_Tot"; break;
+                case 181: name = "Program_Fail_Cnt_Total"; break;
+                case 182: name = "Erase_Fail_Count_Total"; break;
+                case 183: name = "Runtime_Bad_Block"; break;
+                case 184: name = "End-to-End_Error"; break;
+                case 187: name = "Reported_Uncorrect"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 188: name = "Command_Timeout"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 189: name = "High_Fly_Writes"; break;
+                case 190: name = "Airflow_Temperature_Cel"; name = "Airflow_Temperature_Cel"; break;
+                case 191: name = "G-Sense_Error_Rate"; break;
+                case 192: name = "Power-Off_Retract_Count"; break;
+                case 193: name = "Load_Cycle_Count"; break;
+                case 194: name = "Temperature_Celsius"; break;
+                case 195: name = "Hardware_ECC_Recovered"; break;
+                case 196: name = "Reallocated_Event_Count"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 197: name = "Current_Pending_Sector"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 198: name = "Offline_Uncorrectable"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 199: name = "UDMA_CRC_Error_Count"; status_str = (raw_to_uint64(attr->raw) > 0) ? "WARNING" : "OK"; break;
+                case 200: name = "Multi_Zone_Error_Rate"; break;
+                case 201: name = "Soft_Read_Error_Rate"; break;
+                case 202: name = "Data_Address_Mark_Errs"; break;
+                case 203: name = "Run_Out_Cancel"; break;
+                case 204: name = "Soft_ECC_Correction"; break;
+                case 205: name = "Thermal_Asperity_Rate"; break;
+                case 206: name = "Flying_Height"; break;
+                case 207: name = "Spin_High_Current"; break;
+                case 208: name = "Spin_Buzz"; break;
+                case 209: name = "Offline_Seek_Performnce"; break;
+                case 220: name = "Disk_Shift"; break;
+                case 221: name = "G-Sense_Error_Rate_2"; break;
+                case 222: name = "Loaded_Hours"; break;
+                case 223: name = "Load_Retry_Count"; break;
+                case 224: name = "Load_Friction"; break;
+                case 225: name = "Load_Cycle_Count_2"; break;
+                case 226: name = "Load_In_Time"; break;
+                case 228: name = "Power-off_Retract_Count"; break;
+                case 230: name = "Head_Amplitude"; break;
+                case 231: name = "Temperature_Celsius_SSD"; break;
+                case 232: name = "Available_Reservd_Space"; break;
+                case 233: name = "Media_Wearout_Indicator"; break;
+                case 234: name = "Average_Erase_Count_AND_Maximum_Erase_Count"; break;
+                case 235: name = "Good_Block_Count_AND_System_Free_Block_Count"; break;
+                case 240: name = "Head_Flying_Hours"; break;
+                case 241: name = "Total_LBAs_Written"; break;
+                case 242: name = "Total_LBAs_Read"; break;
+                case 243: name = "Total_LBAs_Written_Expanded"; break;
+                case 244: name = "Total_LBAs_Read_Expanded"; break;
+                case 250: name = "Read_Error_Retry_Rate"; break;
+                default: name = "Vendor_Specific"; break;
+            }
+
+            uint64_t raw_val = raw_to_uint64(attr->raw);
+
+            printf("  %-3d %-25s %.4X %5d %5d %5d %10llu (",
+                   attr->id, name, attr->flags, attr->value, attr->worst, attr->threshold, (unsigned long long)raw_val);
+            for(int j=0; j<6; ++j) printf("%02X", attr->raw[j]);
+            printf(")  %s\\n", status_str);
+        }
     }
-    printf("Diagnóstico SMART real para %s:\n", device);
-    int reallocated = -1, pending = -1, poweron = -1, offline_unc = -1;
-    for (int i = 0; i < data->attr_count; ++i) {
-        uint8_t id = data->attrs[i].id;
-        uint64_t raw = 0;
-        for (int j = 0; j < 6; ++j) raw |= ((uint64_t)data->attrs[i].raw[j]) << (8*j);
-        if (id == 5) reallocated = raw;
-        if (id == 9) poweron = raw;
-        if (id == 197) pending = raw;
-        if (id == 198) offline_unc = raw;
-        printf("ID %3d | Value %3d | Worst %3d | RAW %-10llu\n", id, data->attrs[i].value, data->attrs[i].worst, raw);
-    }
-    if (reallocated >= 0) {
-        if (reallocated > 10)
-            printf("Setores realocados: %d. ALERTA VERMELHO!\n", reallocated);
-        else if (reallocated > 0)
-            printf("Setores realocados: %d. Atenção!\n", reallocated);
-        else
-            printf("Setores realocados: %d. OK.\n", reallocated);
-    }
-    if (pending >= 0) {
-        if (pending > 0)
-            printf("Pending sectors: %d. ALERTA!\n", pending);
-        else
-            printf("Pending sectors: %d. OK.\n", pending);
-    }
-    if (offline_unc >= 0) {
-        if (offline_unc > 0)
-            printf("Uncorrectable sectors: %d. ALERTA!\n", offline_unc);
-        else
-            printf("Uncorrectable sectors: %d. OK.\n", offline_unc);
-    }
-    if (poweron >= 0)
-        printf("Horas ligadas: %d\n", poweron);
+    printf("===================== End of Report ======================\\n\\n");
     return 0;
+}
+
+SmartHealthStatus smart_get_health_summary(const struct smart_data *data) {
+    if (!data) return SMART_HEALTH_UNKNOWN;
+
+    if (data->is_nvme) {
+        SmartHealthStatus nvme_status = SMART_HEALTH_GOOD;
+        uint8_t cw = data->nvme.critical_warning;
+
+        if (cw & 0x04) return SMART_HEALTH_FAILING;
+        if (cw & 0x08) return SMART_HEALTH_FAILING;
+        if (data->nvme.percent_used > 110) {
+             nvme_status = SMART_HEALTH_FAILING;
+        }
+        if (data->nvme.spare_thresh > 0 && data->nvme.avail_spare == 0) {
+            nvme_status = SMART_HEALTH_FAILING;
+        }
+        else if (data->nvme.spare_thresh > 4 && data->nvme.avail_spare < (data->nvme.spare_thresh / 4)) {
+            if (nvme_status < SMART_HEALTH_FAILING) nvme_status = SMART_HEALTH_FAILING;
+        }
+        if (data->nvme.media_errors > 100) {
+            if (nvme_status < SMART_HEALTH_FAILING) nvme_status = SMART_HEALTH_FAILING;
+        }
+        if (nvme_status == SMART_HEALTH_FAILING) return SMART_HEALTH_FAILING;
+
+        if (cw & 0x01) {
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        else if (data->nvme.spare_thresh > 0 && data->nvme.avail_spare < data->nvme.spare_thresh) {
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        if (cw & 0x02) {
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        if (data->nvme.temperature > 343) { 
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        if (cw & 0x10) {
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        if (data->nvme.percent_used >= 95 && data->nvme.percent_used <= 110) {
+             if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        if (data->nvme.media_errors > 0 && data->nvme.media_errors <= 100) {
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        if (data->nvme.unsafe_shutdowns > 20) {
+            if (nvme_status < SMART_HEALTH_WARNING) nvme_status = SMART_HEALTH_WARNING;
+        }
+        return nvme_status;
+
+    } else {
+        SmartHealthStatus current_status = SMART_HEALTH_GOOD;
+        int reallocated_sectors_raw = -1;
+        int pending_sectors_raw = -1;
+        int uncorrectable_sectors_raw = -1;
+
+        for (int i = 0; i < data->attr_count; ++i) {
+            uint8_t id = data->attrs[i].id;
+            uint8_t value = data->attrs[i].value;
+            uint8_t threshold = data->attrs[i].threshold;
+            uint16_t flags = data->attrs[i].flags;
+            uint64_t raw_value = 0;
+            for (int j = 0; j < 6; ++j) raw_value |= ((uint64_t)data->attrs[i].raw[j]) << (8*j);
+
+            if ((flags & 0x0001) && threshold > 0) {
+                if (value <= threshold) {
+                    if (current_status < SMART_HEALTH_PREFAIL) {
+                        current_status = SMART_HEALTH_PREFAIL;
+                    }
+                    if (id == 5 || id == 196 || id == 197 || id == 198) {
+                         if (current_status < SMART_HEALTH_FAILING) {
+                            current_status = SMART_HEALTH_FAILING;
+                         }
+                    }
+                }
+            }
+
+            switch (id) {
+                case 5:
+                    reallocated_sectors_raw = raw_value;
+                    if (raw_value > 50) {
+                        if (current_status < SMART_HEALTH_FAILING) current_status = SMART_HEALTH_FAILING;
+                    } else if (raw_value > 5) {
+                        if (current_status < SMART_HEALTH_WARNING) current_status = SMART_HEALTH_WARNING;
+                    }
+                    break;
+                case 197:
+                    pending_sectors_raw = raw_value;
+                    if (raw_value > 10) {
+                        if (current_status < SMART_HEALTH_FAILING) current_status = SMART_HEALTH_FAILING;
+                    } else if (raw_value > 0) {
+                        if (current_status < SMART_HEALTH_WARNING) current_status = SMART_HEALTH_WARNING;
+                    }
+                    break;
+                case 198:
+                    uncorrectable_sectors_raw = raw_value;
+                    if (raw_value > 10) {
+                        if (current_status < SMART_HEALTH_FAILING) current_status = SMART_HEALTH_FAILING;
+                    } else if (raw_value > 0) {
+                        if (current_status < SMART_HEALTH_WARNING) current_status = SMART_HEALTH_WARNING;
+                    }
+                    break;
+                case 199:
+                    if (raw_value > 100) {
+                         if (current_status < SMART_HEALTH_WARNING) current_status = SMART_HEALTH_WARNING;
+                    }
+                    break;
+            }
+        }
+        return current_status;
+    }
+    return SMART_HEALTH_UNKNOWN;
 }

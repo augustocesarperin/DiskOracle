@@ -1,0 +1,38 @@
+# Build artifacts
+build/
+CMakeFiles/
+*.vcxproj
+*.vcxproj.filters
+*.sln
+*.suo
+*.user
+*.ncb
+*.sdf
+*.opensdf
+cmake_install.cmake
+CMakeCache.txt
+Testing/
+DartConfiguration.tcl
+
+# Logs
+logs/
+*.log
+
+# Editor/IDE specific files
+.vscode/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Executables and other compiled objects
+*.exe
+*.dll
+*.so
+*.o
+*.obj
+*.lib
+*.a
+
+# Generated reports
+reports/ 
