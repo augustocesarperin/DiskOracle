@@ -6,18 +6,74 @@
 #include <strsafe.h>
 #include <time.h>    // Para time_t, strftime, localtime_s
 #include <windows.h> // Para StringCchPrintfA, StringCchCopyA
-
+#include <inttypes.h> // For PRIu64
+#include "../include/pal.h" // For PAL_STATUS codes
+#include "../include/smart.h" // For struct smart_data
 // Helper para escapar strings JSON (implementação MUITO básica)
 static void escape_json_string(const char* input, char* output, size_t out_size) {
     if (!input || !output || out_size == 0) {
-        if (output && out_size > 0) output[0] = '\0';
+        if (output && out_size > 0) output[0] = (char)'\0';
         return;
     }
-    // TODO: Implementar escaping real para caracteres como ", \, \n, \r, \t, etc.
-    // Por enquanto, apenas copia, o que pode quebrar o JSON se houver caracteres especiais.
-    StringCchCopyA(output, out_size, input);
+
+    char* out_ptr = output;
+    const char* in_ptr = input;
+    size_t remaining_size = out_size - 1; // Leave space for null terminator
+
+    while (*in_ptr && remaining_size > 0) {
+        char char_to_escape = *in_ptr;
+        char escape_seq[7] = {0}; // Max \\uXXXX + null
+        int seq_len = 0;
+
+        switch (char_to_escape) {
+            case '"': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\\""); seq_len = 2; break;
+            case '\\': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\\\"); seq_len = 2; break;
+            // case '/': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\/"); seq_len = 2; break; // Optional
+            case '\b': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\b"); seq_len = 2; break;
+            case '\f': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\f"); seq_len = 2; break;
+            case '\n': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\n"); seq_len = 2; break;
+            case '\r': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\r"); seq_len = 2; break;
+            case '\t': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\t"); seq_len = 2; break;
+            default:
+                if (char_to_escape >= 0 && char_to_escape <= 0x1F) { // Control characters
+                    StringCchPrintfA(escape_seq, sizeof(escape_seq), "\\\\u%04X", (unsigned char)char_to_escape);
+                    seq_len = 6;
+                } else {
+                    // No escape needed for this character
+                }
+                break;
+        }
+
+        if (seq_len > 0) {
+            if (remaining_size >= (size_t)seq_len) {
+                StringCchCopyA(out_ptr, remaining_size + 1, escape_seq);
+                out_ptr += seq_len;
+                remaining_size -= seq_len;
+            } else {
+                // Not enough space for escape sequence, truncate
+                break;
+            }
+        } else {
+            // No escape needed, copy character directly
+            if (remaining_size >= 1) {
+                *out_ptr = char_to_escape;
+                out_ptr++;
+                remaining_size--;
+            } else {
+                // Not enough space for character, truncate
+                break;
+            }
+        }
+        in_ptr++;
+    }
+    *out_ptr = (char)'\0'; // Null-terminate the output string
 }
 
+static uint64_t get_nvme_counter_val(const uint8_t counter[16]) {
+    uint64_t val = 0;
+    memcpy(&val, counter, sizeof(uint64_t));
+    return val;
+}
 
 int nvme_export_to_json(
     const char* device_path,                  
@@ -30,6 +86,7 @@ int nvme_export_to_json(
     FILE* outfile = stdout; 
     char buffer[1024];      
     char escaped_str[256];  
+    bool first_section_written = false;
 
     fprintf(stderr, "[DEBUG NVME_EXPORT_JSON] Beginning JSON export for %s\n", device_path ? device_path : "Unknown Device");
     fflush(stderr);
@@ -41,7 +98,7 @@ int nvme_export_to_json(
         if (err != 0 || !outfile) {
             fprintf(stderr, "[ERROR NVME_EXPORT_JSON] Failed to open output file: '%s'. Error code: %d\n", output_file_path, err);
             fflush(stderr);
-            return PAL_STATUS_OUTPUT_ERROR;
+            return PAL_STATUS_IO_ERROR;
         }
     }
 
@@ -54,7 +111,23 @@ int nvme_export_to_json(
         fprintf(outfile, "\n    \"model\": \"%s\",", escaped_str);
         escape_json_string(basic_info->serial, escaped_str, sizeof(escaped_str));
         fprintf(outfile, "\n    \"serialNumber\": \"%s\",", escaped_str);
-        fprintf(outfile, "\n    \"firmwareRevision\": \"N/A (Not in BasicDriveInfo)\",");
+        
+        char firmware_str[9]; // NVMe firmware is 8 bytes + null terminator
+        if (sdata && sdata->is_nvme) {
+            // Copy firmware version, ensuring null termination
+            memcpy(firmware_str, sdata->data.nvme.firmware, 8);
+            firmware_str[8] = (char)'\0';
+            // Trim trailing spaces from firmware string if any
+            for (int i = 7; i >= 0 && firmware_str[i] == ' '; i--) {
+                firmware_str[i] = (char)'\0';
+            }
+        } else {
+            // For ATA or if sdata is not available, use N/A
+            StringCchCopyA(firmware_str, sizeof(firmware_str), "N/A");
+        }
+        escape_json_string(firmware_str, escaped_str, sizeof(escaped_str));
+        fprintf(outfile, "\n    \"firmwareRevision\": \"%s\",", escaped_str);
+
         escape_json_string(basic_info->type, escaped_str, sizeof(escaped_str));
         fprintf(outfile, "\n    \"driveType\": \"%s\",", escaped_str);
         escape_json_string(basic_info->bus_type, escaped_str, sizeof(escaped_str));
@@ -63,50 +136,45 @@ int nvme_export_to_json(
         fprintf(outfile, "\n    \"model\": \"N/A\",\n    \"serialNumber\": \"N/A\",\n    \"firmwareRevision\": \"N/A\",\n    \"driveType\": \"N/A\",\n    \"busType\": \"N/A\"");
     }
     fprintf(outfile, "\n  },"); 
-
-    
+    first_section_written = true;
+  
     if (hybrid_ctx) {
+        if (first_section_written) fprintf(outfile, ",");
         fprintf(outfile, "\n  \"accessMethodUsed\": {\n");
         escape_json_string(hybrid_ctx->last_operation_result.method_name, escaped_str, sizeof(escaped_str));
         fprintf(outfile, "    \"methodName\": \"%s\",\n", escaped_str);
         fprintf(outfile, "    \"success\": %s,\n", hybrid_ctx->last_operation_result.success ? "true" : "false");
         fprintf(outfile, "    \"executionTimeMs\": %lu,\n", hybrid_ctx->last_operation_result.execution_time_ms);
         fprintf(outfile, "    \"errorCode\": %lu\n", hybrid_ctx->last_operation_result.error_code);
-        fprintf(outfile, "  },"); 
+        fprintf(outfile, "  }"); 
+        first_section_written = true;
     }
 
     // SMART (NVMe ou ATA)
     if (sdata && hybrid_ctx && hybrid_ctx->last_operation_result.success) {
         if (sdata->is_nvme) {
-            const struct nvme_smart_log* nvme = &sdata->data.nvme;
+            const struct smart_nvme* nvme = &sdata->data.nvme;
             fprintf(outfile, "\n  \"smartLogNvme\": {\n");
             fprintf(outfile, "    \"criticalWarning\": %u,\n", nvme->critical_warning);
-            fprintf(outfile, "    \"temperatureKelvin\": %u,\n", nvme->temperature);
+
+            uint16_t temp_kelvin_val = 0;
+            memcpy(&temp_kelvin_val, nvme->temperature, sizeof(uint16_t));
+            fprintf(outfile, "    \"temperatureKelvin\": %u,\n", temp_kelvin_val);
+
             fprintf(outfile, "    \"availableSparePercent\": %u,\n", nvme->avail_spare);
             fprintf(outfile, "    \"availableSpareThresholdPercent\": %u,\n", nvme->spare_thresh);
             fprintf(outfile, "    \"percentageUsed\": %u,\n", nvme->percent_used);
-            uint64_t temp_u64;
-            memcpy(&temp_u64, nvme->data_units_read, sizeof(uint64_t));
-            fprintf(outfile, "    \"dataUnitsRead_x1000_512B\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->data_units_written, sizeof(uint64_t));
-            fprintf(outfile, "    \"dataUnitsWritten_x1000_512B\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->host_read_commands, sizeof(uint64_t));
-            fprintf(outfile, "    \"hostReadCommands\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->host_write_commands, sizeof(uint64_t));
-            fprintf(outfile, "    \"hostWriteCommands\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->controller_busy_time, sizeof(uint64_t));
-            fprintf(outfile, "    \"controllerBusyTimeMinutes\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->power_cycles, sizeof(uint64_t));
-            fprintf(outfile, "    \"powerCycles\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->power_on_hours, sizeof(uint64_t));
-            fprintf(outfile, "    \"powerOnHours\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->unsafe_shutdowns, sizeof(uint64_t));
-            fprintf(outfile, "    \"unsafeShutdowns\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->media_errors, sizeof(uint64_t));
-            fprintf(outfile, "    \"mediaAndDataIntegrityErrors\": %llu,\n", temp_u64);
-            memcpy(&temp_u64, nvme->num_err_log_entries, sizeof(uint64_t));
-            fprintf(outfile, "    \"numberOfErrorInformationLogEntries\": %llu\n", temp_u64);
-            // Adicionar outros campos conforme necessário
+            fprintf(outfile, "    \"dataUnitsRead_x1000_512B\": %llu,\n", get_nvme_counter_val(nvme->data_units_read));
+            fprintf(outfile, "    \"dataUnitsWritten_x1000_512B\": %llu,\n", get_nvme_counter_val(nvme->data_units_written));
+            fprintf(outfile, "    \"hostReadCommands\": %llu,\n", get_nvme_counter_val(nvme->host_read_commands));
+            fprintf(outfile, "    \"hostWriteCommands\": %llu,\n", get_nvme_counter_val(nvme->host_write_commands));
+            fprintf(outfile, "    \"controllerBusyTimeMinutes\": %llu,\n", get_nvme_counter_val(nvme->controller_busy_time));
+            fprintf(outfile, "    \"powerCycles\": %llu,\n", get_nvme_counter_val(nvme->power_cycles));
+            fprintf(outfile, "    \"powerOnHours\": %llu,\n", get_nvme_counter_val(nvme->power_on_hours));
+            fprintf(outfile, "    \"unsafeShutdowns\": %llu,\n", get_nvme_counter_val(nvme->unsafe_shutdowns));
+            fprintf(outfile, "    \"mediaAndDataIntegrityErrors\": %llu,\n", get_nvme_counter_val(nvme->media_errors));
+            fprintf(outfile, "    \"numberOfErrorInformationLogEntries\": %llu\n", get_nvme_counter_val(nvme->num_err_log_entries));
+            
             fprintf(outfile, "  },");
         } else { // ATA SMART Data
             // TODO: Implementar exportação detalhada para atributos ATA
@@ -126,11 +194,14 @@ int nvme_export_to_json(
             fprintf(outfile, "  ],");
         }
     } else {
-        fprintf(outfile, "\n  \"smartLog\": { \"status\": \"SMART data not available or fetch failed.\" },");
+        if (first_section_written) fprintf(outfile, ",");
+        fprintf(outfile, "\n  \"smartLog\": { \"status\": \"" "SMART data not available or fetch failed." "\" }");
+        first_section_written = true;
     }
 
     // Seção 4: Alertas de Saúde (Apenas para NVMe por enquanto)
     if (alerts && sdata && sdata->is_nvme) {
+        if (first_section_written) fprintf(outfile, ",");
         fprintf(outfile, "\n  \"healthAlerts\": [\n");
         if (alerts->alert_count > 0) {
             for (int i = 0; i < alerts->alert_count; ++i) {
@@ -149,12 +220,16 @@ int nvme_export_to_json(
             }
         }
         fprintf(outfile, "  ],");
+        first_section_written = true;
     } else {
-         fprintf(outfile, "\n  \"healthAlerts\": [],"); // Lista vazia se não for NVMe ou sem alertas
+        if (first_section_written) fprintf(outfile, ",");
+         fprintf(outfile, "\n  \"healthAlerts\": []"); // Lista vazia se não for NVMe ou sem alertas
+         first_section_written = true;
     }
 
     // Seção 5: Resultados do Benchmark (se disponíveis)
     if (hybrid_ctx && hybrid_ctx->benchmark_mode && hybrid_ctx->num_benchmark_results_stored > 0) {
+        if (first_section_written) fprintf(outfile, ",");
         fprintf(outfile, "\n  \"benchmarkResults\": [\n");
         for (int i = 0; i < hybrid_ctx->num_benchmark_results_stored; ++i) {
             const nvme_access_result_t* res = &hybrid_ctx->benchmark_method_results[i];
@@ -167,19 +242,23 @@ int nvme_export_to_json(
             fprintf(outfile, "    }%s\n", (i == hybrid_ctx->num_benchmark_results_stored - 1) ? "" : ",");
         }
         fprintf(outfile, "  ]"); 
+        first_section_written = true;
     } else {
+        if (first_section_written) fprintf(outfile, ",");
         fprintf(outfile, "\n  \"benchmarkResults\": []");
+        first_section_written = true;
     }
     
-    // Timestamp da Geração do Relatório (deve ser o último item ANTES do '}')
     time_t now = time(NULL);
     struct tm ptm_utc;
     // Usar gmtime_s para obter UTC de forma segura
     if (gmtime_s(&ptm_utc, &now) == 0) {
         strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &ptm_utc);
-        fprintf(outfile, ",\n  \"reportGeneratedUtc\": \"%s\"\n", buffer);
+        if (first_section_written) fprintf(outfile, ",");
+        fprintf(outfile, "\n  \"reportGeneratedUtc\": \"%s\"\n", buffer);
     } else {
-        fprintf(outfile, ",\n  \"reportGeneratedUtc\": \"N/A\"\n");
+        if (first_section_written) fprintf(outfile, ",");
+        fprintf(outfile, "\n  \"reportGeneratedUtc\": \"N/A\"\n");
     }
 
     fprintf(outfile, "}\n"); // Fim do objeto JSON principal

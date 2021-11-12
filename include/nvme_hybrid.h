@@ -3,10 +3,46 @@
 
 #include <windows.h> 
 #include <stdint.h>  // uint32_t, uint8_t
+#include "smart.h"    // For struct smart_nvme and other SMART definitions
 
 #ifndef NVME_LOG_PAGE_SIZE_BYTES
 #define NVME_LOG_PAGE_SIZE_BYTES 512
 #endif
+
+#define NVME_LOG_PAGE_HEALTH_INFO 0x02
+#define NVME_LOG_PAGE_SIZE_BYTES 512 // Standard size for Health Info Log
+
+// Forward declaration if smart_nvme is complex and defined in smart.h
+// struct smart_nvme; 
+
+// Cache-related definitions (NEW)
+#define NVME_CACHE_KEY_MAX_LEN 256
+#define MAX_CACHE_ENTRIES 16 // Max NVMe devices to cache
+#define DEFAULT_NVME_CACHE_AGE_SECONDS (5 * 60) // 5 minutes
+
+// Structure for an individual cache item (NEW)
+typedef struct {
+    char key[NVME_CACHE_KEY_MAX_LEN];
+    struct smart_nvme health_log; // The NVMe SMART data
+    time_t timestamp;             // When this entry was updated (Unix time)
+    bool is_valid;
+} nvme_cache_item_t;
+
+// Structure for the global cache (NEW)
+typedef struct {
+    nvme_cache_item_t entries[MAX_CACHE_ENTRIES];
+    int count; // Number of entries currently in cache
+    unsigned int cache_duration_seconds;
+    // Consider adding a mutex here for thread-safety in the future
+} nvme_global_cache_t;
+
+// Global Cache Management Functions (NEW)
+void nvme_cache_global_init(unsigned int duration_seconds);
+void nvme_cache_global_cleanup(void); // Cleans up the global cache (invalidates entries, resets init state).
+nvme_cache_item_t* nvme_cache_global_get(const char* key);
+void nvme_cache_global_update(const char* key, const struct smart_nvme* health_log_to_cache);
+void nvme_cache_global_invalidate(const char* key);
+void nvme_cache_global_invalidate_all(void);
 
 typedef enum {
     NVME_ACCESS_METHOD_NONE = 0,
@@ -130,11 +166,10 @@ typedef struct {
 } nvme_health_alerts_t;
 
 // Forward declarations
-struct nvme_smart_log;
 struct BasicDriveInfo;
 
 void nvme_analyze_health_alerts(
-    const struct nvme_smart_log* smart_log, 
+    const struct smart_nvme* smart_log, 
     nvme_health_alerts_t* health_alerts_out,
     BYTE device_spare_threshold
 );

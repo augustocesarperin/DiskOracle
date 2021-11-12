@@ -1,147 +1,204 @@
-#include "nvme_hybrid.h" // Corrigido para include direto
-#include "pal.h"         // Corrigido para include direto
-#include <windows.h>
+#include "nvme_hybrid.h" // Contém as novas definições de nvme_global_cache_t, etc.
+#include "smart.h"       // Para struct smart_nvme
+#include "logging.h"
 #include <stdio.h>
 #include <string.h>
-#include <strsafe.h>
-#include <time.h> // Para time_t, difftime, se usarmos para TTL de forma mais simples que SYSTEMTIME
+#include <time.h>
+#include <stdbool.h>
 
-// Função para inicializar/resetar o cache dentro do contexto
-void nvme_cache_init(nvme_hybrid_context_t* context) {
-    if (!context) return;
-    fprintf(stderr, "[DEBUG NVME_CACHE] Initializing/Resetting SMART cache for device: %s\n", context->device_path);
-    context->smart_cache.is_valid = FALSE;
-    ZeroMemory(context->smart_cache.cached_data, NVME_LOG_PAGE_SIZE_BYTES);
-    ZeroMemory(&context->smart_cache.last_update_time, sizeof(SYSTEMTIME));
-    ZeroMemory(context->smart_cache.device_signature, sizeof(context->smart_cache.device_signature));
-    // context->cache_duration_seconds e context->cache_enabled são configurados externamente (e.g., por CLI parser)
+// Variável de cache global estática
+static nvme_global_cache_t g_nvme_cache;
+static bool g_cache_initialized = false;
+
+void nvme_cache_global_init(unsigned int duration_seconds) {
+    DEBUG_PRINT("Initializing global NVMe cache. Duration: %u seconds.", duration_seconds);
+    memset(&g_nvme_cache, 0, sizeof(nvme_global_cache_t));
+    g_nvme_cache.cache_duration_seconds = (duration_seconds > 0) ? duration_seconds : DEFAULT_NVME_CACHE_AGE_SECONDS;
+    // Inicializa todas as entradas como inválidas
+    for (int i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        g_nvme_cache.entries[i].is_valid = false;
+    }
+    g_nvme_cache.count = 0; // Redundante devido ao memset, mas explícito.
+    g_cache_initialized = true;
+    DEBUG_PRINT("Global NVMe cache initialized. Max entries: %d, Cache age: %u s.", MAX_CACHE_ENTRIES, g_nvme_cache.cache_duration_seconds);
 }
 
-// Tenta obter dados SMART do cache.
-// Retorna TRUE se hit e dados válidos, FALSE caso contrário.
-// Se hit, preenche out_buffer, out_bytes_returned, e cache_hit_result.
-BOOL nvme_cache_get(
-    nvme_hybrid_context_t* context, 
-    BYTE* out_buffer, 
-    DWORD* out_bytes_returned,
-    nvme_access_result_t* cache_hit_result // Para preencher se for cache hit
-) {
-    if (!context || !out_buffer || !out_bytes_returned || !cache_hit_result || !context->cache_enabled) {
-        return FALSE;
-    }
-
-    fprintf(stderr, "[DEBUG NVME_CACHE] Checking cache for device: %s (Current Sig: '%s')\n", context->device_path, context->current_device_signature);
-
-    if (!context->smart_cache.is_valid) {
-        fprintf(stderr, "[DEBUG NVME_CACHE] Cache is invalid.\n");
-        return FALSE;
-    }
-
-    // 1. Verificar assinatura do dispositivo (se implementado e disponível)
-    if (strlen(context->current_device_signature) > 0 && 
-        strncmp(context->current_device_signature, context->smart_cache.device_signature, sizeof(context->smart_cache.device_signature)) != 0) {
-        fprintf(stderr, "[DEBUG NVME_CACHE] Device signature mismatch. Cache invalidated. Cached Sig: '%s', Current Sig: '%s'\n", 
-                context->smart_cache.device_signature, context->current_device_signature);
-        nvme_cache_invalidate(context); // Invalida o cache
-        return FALSE;
-    }
-
-    // 2. Verificar TTL (Time-To-Live)
-    SYSTEMTIME currentTimeSt;
-    FILETIME currentTimeFt, lastUpdateFt;
-    ULARGE_INTEGER currentTimeUl, lastUpdateUl;
-    GetSystemTime(&currentTimeSt);
-
-    if (!SystemTimeToFileTime(&context->smart_cache.last_update_time, &lastUpdateFt) || 
-        !SystemTimeToFileTime(&currentTimeSt, &currentTimeFt)) {
-        fprintf(stderr, "[ERROR NVME_CACHE] Could not convert system times to file times for TTL check.\n");
-        nvme_cache_invalidate(context); // Invalida por precaução
-        return FALSE;
-    }
-
-    lastUpdateUl.LowPart = lastUpdateFt.dwLowDateTime;
-    lastUpdateUl.HighPart = lastUpdateFt.dwHighDateTime;
-    currentTimeUl.LowPart = currentTimeFt.dwLowDateTime;
-    currentTimeUl.HighPart = currentTimeFt.dwHighDateTime;
-
-    ULONGLONG diff_100ns = currentTimeUl.QuadPart - lastUpdateUl.QuadPart;
-    DWORD elapsed_seconds = (DWORD)(diff_100ns / 10000000ULL); // 100ns units to seconds
-
-    fprintf(stderr, "[DEBUG NVME_CACHE] Cache age: %lu seconds. Cache duration: %lu seconds.\n", elapsed_seconds, context->cache_duration_seconds);
-
-    if (elapsed_seconds >= context->cache_duration_seconds) {
-        fprintf(stderr, "[DEBUG NVME_CACHE] Cache expired (age: %lu >= duration: %lu). Cache invalidated.\n", elapsed_seconds, context->cache_duration_seconds);
-        nvme_cache_invalidate(context);
-        return FALSE;
-    }
-
-    // Cache HIT!
-    fprintf(stderr, "[INFO NVME_CACHE] Cache HIT for device %s! Age: %lu s.\n", context->device_path, elapsed_seconds);
-    memcpy(out_buffer, context->smart_cache.cached_data, NVME_LOG_PAGE_SIZE_BYTES);
-    *out_bytes_returned = NVME_LOG_PAGE_SIZE_BYTES;
-
-    // Preencher method_result para o cache hit
-    cache_hit_result->method_used = NVME_ACCESS_METHOD_CACHE;
-    StringCchCopyA(cache_hit_result->method_name, sizeof(cache_hit_result->method_name), NVME_METHOD_NAME_CACHE);
-    cache_hit_result->execution_time_ms = 0; // Cache access é considerado instantâneo para este propósito
-    cache_hit_result->success = TRUE;
-    cache_hit_result->error_code = 0;
-    
-    return TRUE;
+void nvme_cache_global_cleanup(void) {
+    DEBUG_PRINT("Cleaning up global NVMe cache.");
+    // Com um cache estático global, não há muita limpeza de memória para fazer,
+    // mas podemos invalidar todas as entradas ou resetar o estado.
+    nvme_cache_global_invalidate_all();
+    g_cache_initialized = false;
 }
 
-// Atualiza o cache com novos dados SMART
-void nvme_cache_update(
-    nvme_hybrid_context_t* context, 
-    const BYTE* data_to_cache, 
-    DWORD data_size
-) {
-    if (!context || !data_to_cache || data_size < NVME_LOG_PAGE_SIZE_BYTES || !context->cache_enabled) {
+nvme_cache_item_t* nvme_cache_global_get(const char* key) {
+    if (!g_cache_initialized) {
+        DEBUG_PRINT("Cache not initialized. Call nvme_cache_global_init() first.");
+        // Alternativamente, poderia inicializar aqui com defaults, mas é melhor que seja explícito.
+        nvme_cache_global_init(DEFAULT_NVME_CACHE_AGE_SECONDS); 
+    }
+    if (!key) {
+        DEBUG_PRINT("nvme_cache_global_get: Chave nula fornecida.");
+        return NULL;
+    }
+
+    DEBUG_PRINT("Attempting to get cache for key: %s", key);
+    for (int i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        if (g_nvme_cache.entries[i].is_valid && strcmp(g_nvme_cache.entries[i].key, key) == 0) {
+            // Chave encontrada, verificar expiração
+            time_t current_time = time(NULL);
+            if (difftime(current_time, g_nvme_cache.entries[i].timestamp) < g_nvme_cache.cache_duration_seconds) {
+                DEBUG_PRINT("Cache HIT for key: %s. Age: %.0f s.", key, difftime(current_time, g_nvme_cache.entries[i].timestamp));
+                return &g_nvme_cache.entries[i];
+            } else {
+                DEBUG_PRINT("Cache STALE for key: %s. Age: %.0f s. Max age: %u s. Invalidating.", 
+                            key, difftime(current_time, g_nvme_cache.entries[i].timestamp), g_nvme_cache.cache_duration_seconds);
+                g_nvme_cache.entries[i].is_valid = false; // Marca como inválida/expirada
+                // Não decrementamos g_nvme_cache.count aqui, pois a entrada ainda ocupa um slot,
+                // apenas não é mais válida. Será sobrescrita por um novo update.
+                return NULL; // Tratar como cache miss
+            }
+        }
+    }
+    DEBUG_PRINT("Cache MISS for key: %s", key);
+    return NULL;
+}
+
+void nvme_cache_global_update(const char* key, const struct smart_nvme* health_log_to_cache) {
+    if (!g_cache_initialized) {
+        // Considerar inicializar com defaults se chamado antes do init explícito
+        DEBUG_PRINT("Cache not initialized. Updating will proceed after implicit init.");
+        nvme_cache_global_init(DEFAULT_NVME_CACHE_AGE_SECONDS);
+    }
+    if (!key || !health_log_to_cache) {
+        DEBUG_PRINT("nvme_cache_global_update: Chave nula ou dados nulos fornecidos.");
         return;
     }
 
-    fprintf(stderr, "[DEBUG NVME_CACHE] Updating cache for device: %s (Sig: '%s')\n", context->device_path, context->current_device_signature);
-    
-    memcpy(context->smart_cache.cached_data, data_to_cache, NVME_LOG_PAGE_SIZE_BYTES);
-    GetSystemTime(&context->smart_cache.last_update_time);
-    StringCchCopyA(context->smart_cache.device_signature, 
-                   sizeof(context->smart_cache.device_signature), 
-                   context->current_device_signature);
-    context->smart_cache.is_valid = TRUE;
-    
-    fprintf(stderr, "[DEBUG NVME_CACHE] Cache updated successfully.\n");
-}
+    DEBUG_PRINT("Attempting to update cache for key: %s", key);
+    int found_idx = -1;
+    int oldest_idx = -1;
+    time_t oldest_time = 0;
 
-// Invalida o cache (e.g., se uma operação de escrita no disco ocorreu, ou TTL expirou)
-void nvme_cache_invalidate(nvme_hybrid_context_t* context) {
-    if (!context) return;
-    fprintf(stderr, "[DEBUG NVME_CACHE] Invalidating cache for device: %s\n", context->device_path);
-    context->smart_cache.is_valid = FALSE;
-    // Opcionalmente, zerar last_update_time e device_signature também
-    // ZeroMemory(&context->smart_cache.last_update_time, sizeof(SYSTEMTIME));
-    // ZeroMemory(context->smart_cache.device_signature, sizeof(context->smart_cache.device_signature));
-}
-
-// Gera uma assinatura de dispositivo simples baseada no modelo e serial.
-// Esta é uma implementação básica; pode ser expandida (e.g. hash).
-void nvme_cache_generate_signature(
-    const char* model, 
-    const char* serial, 
-    char* out_signature, 
-    size_t signature_buffer_size
-) {
-    if (!out_signature || signature_buffer_size == 0) return;
-    
-    if (model && serial) {
-        StringCchPrintfA(out_signature, signature_buffer_size, "MODEL=%s&SERIAL=%s", model, serial);
-    } else if (model) {
-        StringCchPrintfA(out_signature, signature_buffer_size, "MODEL=%s", model);
-    } else if (serial) {
-        StringCchPrintfA(out_signature, signature_buffer_size, "SERIAL=%s", serial);
-    } else {
-        StringCchCopyA(out_signature, signature_buffer_size, "UNKNOWN_DEVICE");
+    // Tentar encontrar a entrada existente ou a primeira inválida/vaga
+    for (int i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        if (g_nvme_cache.entries[i].is_valid && strcmp(g_nvme_cache.entries[i].key, key) == 0) {
+            found_idx = i;
+            break;
+        }
+        if (!g_nvme_cache.entries[i].is_valid) {
+            if (found_idx == -1 || !g_nvme_cache.entries[found_idx].is_valid ) { // Preferir uma entrada totalmente nova/inválida
+                 found_idx = i; // Encontrou um slot inválido/vazio
+            }
+        }
+        // Para política de substituição LRU (ou mais antiga se não houver vagas)
+        if (i == 0 || g_nvme_cache.entries[i].timestamp < oldest_time) {
+            oldest_time = g_nvme_cache.entries[i].timestamp;
+            oldest_idx = i;
+        }
     }
-    // Garantir terminação nula em caso de truncamento por StringCchPrintfA
-    out_signature[signature_buffer_size - 1] = '\0';
-    fprintf(stderr, "[DEBUG NVME_CACHE] Generated device signature: '%s'\n", out_signature);
+
+    if (found_idx != -1 && !g_nvme_cache.entries[found_idx].is_valid) {
+        // Encontrou um slot novo/inválido, e não existia uma entrada válida com essa chave.
+        // Se a entrada encontrada já era inválida, não precisa incrementar o count.
+        // Se era uma entrada nova (além do count atual e dentro de MAX_CACHE_ENTRIES), incrementa.
+        if (g_nvme_cache.count < MAX_CACHE_ENTRIES && found_idx >= g_nvme_cache.count) {
+             // Este cenário é um pouco confuso com a lógica atual de `found_idx` para "primeiro slot inválido".
+             // Simplificação: se vamos usar um slot, e ele era `is_valid == false` e era um slot que não estava "contado", incrementamos.
+             // Mas a forma mais simples é se `found_idx` é um slot novo e não apenas uma chave existente. 
+             // Vamos refinar: se achamos a chave, usamos `found_idx`. Senão, achamos um slot para novo.
+        }
+    }
+
+    int target_idx = -1;
+    // 1. Tentar atualizar entrada existente
+    for(int i=0; i < MAX_CACHE_ENTRIES; ++i) {
+        if(g_nvme_cache.entries[i].is_valid && strcmp(g_nvme_cache.entries[i].key, key) == 0) {
+            target_idx = i;
+            DEBUG_PRINT("Updating existing cache entry at index %d for key: %s", target_idx, key);
+            break;
+        }
+    }
+
+    // 2. Se não encontrou, tentar encontrar um slot inválido
+    if (target_idx == -1) {
+        for (int i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+            if (!g_nvme_cache.entries[i].is_valid) {
+                target_idx = i;
+                DEBUG_PRINT("Using new/invalid cache slot at index %d for key: %s", target_idx, key);
+                if (g_nvme_cache.count < MAX_CACHE_ENTRIES) { // Apenas incrementa se estivermos realmente adicionando a um slot "novo" para o contador
+                    // Esta lógica de count pode ser removida se MAX_CACHE_ENTRIES for o único limite.
+                    // O count era mais para a lista encadeada original. Para array, a validade do slot é mais importante.
+                }
+                break;
+            }
+        }
+    }
+
+    // 3. Se cache cheio e nenhuma entrada existente para a chave, usar política de substituição (mais antigo)
+    if (target_idx == -1) {
+        if (MAX_CACHE_ENTRIES > 0) {
+            target_idx = (oldest_idx != -1) ? oldest_idx : 0; // Fallback para 0 se algo der errado com oldest_idx
+            DEBUG_PRINT("Cache full. Evicting entry at index %d (key: %s) for new key: %s", 
+                        target_idx, g_nvme_cache.entries[target_idx].key, key);
+        } else {
+            DEBUG_PRINT("Cache size is 0. Cannot update.");
+            return; // Cache tem tamanho 0, não pode armazenar nada.
+        }
+    }
+    
+    // Atualizar a entrada no target_idx
+    // strncpy_s(g_nvme_cache.entries[target_idx].key, NVME_CACHE_KEY_MAX_LEN, key, _TRUNCATE);
+    snprintf(g_nvme_cache.entries[target_idx].key, NVME_CACHE_KEY_MAX_LEN, "%s", key);
+    memcpy(&g_nvme_cache.entries[target_idx].health_log, health_log_to_cache, sizeof(struct smart_nvme));
+    g_nvme_cache.entries[target_idx].timestamp = time(NULL);
+    g_nvme_cache.entries[target_idx].is_valid = true;
+
+    DEBUG_PRINT("Cache updated for key: %s at index %d", key, target_idx);
+}
+
+void nvme_cache_global_invalidate(const char* key) {
+    if (!g_cache_initialized || !key) return;
+    DEBUG_PRINT("Invalidating cache for key: %s", key);
+    for (int i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        if (g_nvme_cache.entries[i].is_valid && strcmp(g_nvme_cache.entries[i].key, key) == 0) {
+            g_nvme_cache.entries[i].is_valid = false;
+            DEBUG_PRINT("Cache entry for key %s at index %d invalidated.", key, i);
+            return; // Assume chaves são únicas
+        }
+    }
+    DEBUG_PRINT("Key %s not found in cache for invalidation.", key);
+}
+
+void nvme_cache_global_invalidate_all(void) {
+    if (!g_cache_initialized) return;
+    DEBUG_PRINT("Invalidating all global NVMe cache entries.");
+    for (int i = 0; i < MAX_CACHE_ENTRIES; ++i) {
+        g_nvme_cache.entries[i].is_valid = false;
+    }
+}
+
+// Remover funções antigas que usavam nvme_hybrid_context_t diretamente para o cache.
+// As funções nvme_cache_init, nvme_cache_get, nvme_cache_update, nvme_cache_invalidate 
+// e nvme_cache_generate_signature que estavam aqui antes e operavam no contexto foram removidas 
+// e substituídas pelas versões _global_.
+// A função nvme_cache_generate_signature pode ser mantida se for útil para criar a chave externamente.
+
+// Função para gerar uma assinatura de dispositivo (chave de cache)
+// Pode ser chamada externamente para criar a chave antes de usar as funções de cache.
+void nvme_cache_generate_signature(const char* model, const char* serial, char* out_key, size_t key_buffer_size) {
+    if (!out_key || key_buffer_size == 0) return;
+    
+    // Usar o serial como chave primária se disponível, pois é mais provável ser único.
+    // Model pode ser usado como fallback ou parte de uma chave mais complexa se necessário.
+    if (serial && strlen(serial) > 0) {
+        snprintf(out_key, key_buffer_size, "NVME_HEALTH_SERIAL_%s", serial);
+    } else if (model && strlen(model) > 0) {
+        snprintf(out_key, key_buffer_size, "NVME_HEALTH_MODEL_%s", model);
+    } else {
+        snprintf(out_key, key_buffer_size, "NVME_HEALTH_UNKNOWN_DEVICE");
+    }
+    // Garantir terminação nula em caso de truncamento por snprintf
+    out_key[key_buffer_size - 1] = '\0';
+    DEBUG_PRINT("Generated cache key: '%s'", out_key);
 } 

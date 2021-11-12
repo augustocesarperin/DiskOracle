@@ -1,4 +1,4 @@
-#include "nvme_hybrid.h" // Corrigido para include direto
+#include "nvme_hybrid.h"
 #include "pal.h"           // Para BasicDriveInfo e PAL_STATUS, etc.
 #include "smart.h"         // Para struct nvme_smart_log
 #include <stdio.h>
@@ -45,8 +45,7 @@ static void add_alert(
 
 // Analisa os dados SMART NVMe e preenche a estrutura de alertas.
 void nvme_analyze_health_alerts(
-    const struct nvme_smart_log* smart_log, 
-    // const struct BasicDriveInfo* drive_info, // Descomentar se precisarmos de algo do drive_info que não seja spare_thresh
+    const struct smart_nvme* smart_log, 
     nvme_health_alerts_t* health_alerts_out,
     BYTE device_spare_threshold // Vem do Identify Controller data (padrão 10% se não disponível)
 ) {
@@ -57,8 +56,6 @@ void nvme_analyze_health_alerts(
     ZeroMemory(health_alerts_out, sizeof(nvme_health_alerts_t));
     // health_alerts_out->alert_count = 0; // ZeroMemory já faz isso
 
-    fprintf(stderr, "[DEBUG NVME_ALERTS] Analyzing NVMe health data. Device Spare Threshold: %u%%\n", device_spare_threshold);
-    fflush(stderr);
 
     char current_val_str[MAX_NVME_ALERT_VALUE_STR];
     char threshold_str[MAX_NVME_ALERT_VALUE_STR];
@@ -81,7 +78,9 @@ void nvme_analyze_health_alerts(
 
     // 2. Temperature (em Kelvin, converter para Celsius para avaliação)
     // smart_log->temperature é uint16_t. [0] é LSB, [1] é MSB. A struct já deve lidar com isso eu acho.
-    uint16_t temp_kelvin = smart_log->temperature;
+    uint16_t temp_kelvin = 0;
+    memcpy(&temp_kelvin, smart_log->temperature, sizeof(uint16_t)); // Correctly copy 2 bytes
+
     int temp_celsius = (int)temp_kelvin - 273; 
     StringCchPrintfA(current_val_str, sizeof(current_val_str), "%d C", temp_celsius);
     if (temp_celsius > TEMP_THRESHOLD_CRITICAL_C) {
@@ -112,39 +111,61 @@ void nvme_analyze_health_alerts(
         StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d%%", PERCENTAGE_USED_THRESHOLD_WARN);
         add_alert(health_alerts_out, NVME_ALERT_PERCENTAGE_USED_HIGH, FALSE, "Percentage Used High", current_val_str, threshold_str);
     }
-    // 5. Unsafe Shutdowns (usar uint64_t para os campos de 128 bits, que são arrays de 16 bytes)
-    uint64_t unsafe_shutdowns = 0;
-    memcpy(&unsafe_shutdowns, smart_log->unsafe_shutdowns, sizeof(uint64_t)); // Copia os primeiros 8 bytes (64 bits)
-    StringCchPrintfA(current_val_str, sizeof(current_val_str), "%llu", unsafe_shutdowns);
-    if (unsafe_shutdowns > UNSAFE_SHUTDOWNS_CRITICAL) {
+    // 5. Unsafe Shutdowns (handle full 128-bit field)
+    uint64_t unsafe_shutdowns_low = 0, unsafe_shutdowns_high = 0;
+    memcpy(&unsafe_shutdowns_low, smart_log->unsafe_shutdowns, sizeof(uint64_t));
+    memcpy(&unsafe_shutdowns_high, smart_log->unsafe_shutdowns + 8, sizeof(uint64_t)); // Next 8 bytes
+
+    if (unsafe_shutdowns_high > 0) {
+        StringCchPrintfA(current_val_str, sizeof(current_val_str), "Value > 2^64-1");
         StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", UNSAFE_SHUTDOWNS_CRITICAL);
-        add_alert(health_alerts_out, NVME_ALERT_UNSAFE_SHUTDOWNS_HIGH, TRUE, "Unsafe Shutdowns Critical", current_val_str, threshold_str);
-    } else if (unsafe_shutdowns > UNSAFE_SHUTDOWNS_WARN) {
-        StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", UNSAFE_SHUTDOWNS_WARN);
-        add_alert(health_alerts_out, NVME_ALERT_UNSAFE_SHUTDOWNS_HIGH, FALSE, "Unsafe Shutdowns High", current_val_str, threshold_str);
+        add_alert(health_alerts_out, NVME_ALERT_UNSAFE_SHUTDOWNS_HIGH, TRUE, "Unsafe Shutdowns Critical (Value Exceeds 64-bit)", current_val_str, threshold_str);
+    } else {
+        StringCchPrintfA(current_val_str, sizeof(current_val_str), "%llu", unsafe_shutdowns_low);
+        if (unsafe_shutdowns_low > UNSAFE_SHUTDOWNS_CRITICAL) {
+            StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", UNSAFE_SHUTDOWNS_CRITICAL);
+            add_alert(health_alerts_out, NVME_ALERT_UNSAFE_SHUTDOWNS_HIGH, TRUE, "Unsafe Shutdowns Critical", current_val_str, threshold_str);
+        } else if (unsafe_shutdowns_low > UNSAFE_SHUTDOWNS_WARN) {
+            StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", UNSAFE_SHUTDOWNS_WARN);
+            add_alert(health_alerts_out, NVME_ALERT_UNSAFE_SHUTDOWNS_HIGH, FALSE, "Unsafe Shutdowns High", current_val_str, threshold_str);
+        }
     }
 
-    // 6. Media Errors
-    uint64_t media_errors = 0;
-    memcpy(&media_errors, smart_log->media_errors, sizeof(uint64_t));
-    StringCchPrintfA(current_val_str, sizeof(current_val_str), "%llu", media_errors);
-    if (media_errors > 0) { // Qualquer erro de mídia é preocupante
+    // 6. Media Errors (handle full 128-bit field)
+    uint64_t media_errors_low = 0, media_errors_high = 0;
+    memcpy(&media_errors_low, smart_log->media_errors, sizeof(uint64_t));
+    memcpy(&media_errors_high, smart_log->media_errors + 8, sizeof(uint64_t)); // Next 8 bytes
+
+    if (media_errors_high > 0) {
+        StringCchPrintfA(current_val_str, sizeof(current_val_str), "Value > 2^64-1");
+        StringCchPrintfA(threshold_str, sizeof(threshold_str), "> 0");
+        add_alert(health_alerts_out, NVME_ALERT_MEDIA_ERRORS_HIGH, TRUE, "Media Errors Detected (Value Exceeds 64-bit)", current_val_str, threshold_str);
+    } else if (media_errors_low > 0) { // Only check low part if high part is zero
+        StringCchPrintfA(current_val_str, sizeof(current_val_str), "%llu", media_errors_low);
         StringCchPrintfA(threshold_str, sizeof(threshold_str), "> 0");
         add_alert(health_alerts_out, NVME_ALERT_MEDIA_ERRORS_HIGH, TRUE, "Media Errors Detected", current_val_str, threshold_str);
     }
 
-    // 7. Number of Error Log 
-    uint64_t num_err_log_entries = 0;
-    memcpy(&num_err_log_entries, smart_log->num_err_log_entries, sizeof(uint64_t));
-    StringCchPrintfA(current_val_str, sizeof(current_val_str), "%llu", num_err_log_entries);
-    if (num_err_log_entries > ERROR_LOG_ENTRIES_CRITICAL) {
+    // 7. Number of Error Log Entries (handle full 128-bit field)
+    uint64_t num_err_log_entries_low = 0, num_err_log_entries_high = 0;
+    memcpy(&num_err_log_entries_low, smart_log->num_err_log_entries, sizeof(uint64_t));
+    memcpy(&num_err_log_entries_high, smart_log->num_err_log_entries + 8, sizeof(uint64_t)); // Next 8 bytes
+
+    if (num_err_log_entries_high > 0) {
+        StringCchPrintfA(current_val_str, sizeof(current_val_str), "Value > 2^64-1");
         StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", ERROR_LOG_ENTRIES_CRITICAL);
-        add_alert(health_alerts_out, NVME_ALERT_ERROR_LOG_ENTRIES_HIGH, TRUE, "Error Log Entries Critical", current_val_str, threshold_str);
-    } else if (num_err_log_entries > ERROR_LOG_ENTRIES_WARN) {
-        StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", ERROR_LOG_ENTRIES_WARN);
-        add_alert(health_alerts_out, NVME_ALERT_ERROR_LOG_ENTRIES_HIGH, FALSE, "Error Log Entries High", current_val_str, threshold_str);
+        add_alert(health_alerts_out, NVME_ALERT_ERROR_LOG_ENTRIES_HIGH, TRUE, "Error Log Entries Critical (Value Exceeds 64-bit)", current_val_str, threshold_str);
+    } else {
+        StringCchPrintfA(current_val_str, sizeof(current_val_str), "%llu", num_err_log_entries_low);
+        if (num_err_log_entries_low > ERROR_LOG_ENTRIES_CRITICAL) {
+            StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", ERROR_LOG_ENTRIES_CRITICAL);
+            add_alert(health_alerts_out, NVME_ALERT_ERROR_LOG_ENTRIES_HIGH, TRUE, "Error Log Entries Critical", current_val_str, threshold_str);
+        } else if (num_err_log_entries_low > ERROR_LOG_ENTRIES_WARN) {
+            StringCchPrintfA(threshold_str, sizeof(threshold_str), "> %d", ERROR_LOG_ENTRIES_WARN);
+            add_alert(health_alerts_out, NVME_ALERT_ERROR_LOG_ENTRIES_HIGH, FALSE, "Error Log Entries High", current_val_str, threshold_str);
+        }
     }
 
-    fprintf(stderr, "[DEBUG NVME_ALERTS] Health analysis complete. Alerts generated: %d\n", health_alerts_out->alert_count);
-    fflush(stderr);
-} 
+    // fprintf(stderr, "[DEBUG NVME_ALERTS] Health analysis complete. Alerts generated: %d\n", health_alerts_out->alert_count);
+    // fflush(stderr);
+}
