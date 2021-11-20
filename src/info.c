@@ -1,20 +1,24 @@
-#include "info.h"
-#include <stdio.h>
-#include <string.h>
-#include "pal.h"
-#include "smart.h"
+#include "../include/info.h"
+#include "../include/pal.h"
+#include "../include/smart.h"
+#include "../include/logging.h" // For DEBUG_PRINT, if used
+#include <stdio.h>    // For printf
+#include <string.h>   // For memset, if not done in pal_get_basic_drive_info init
 
-static const char* smart_status_to_string(SmartHealthStatus status) {
+// Convert SmartStatus enum to a string representation
+static const char* smart_status_to_string(SmartStatus status) {
     switch (status) {
-        case SMART_HEALTH_GOOD:      return "Good";
-        case SMART_HEALTH_WARNING:   return "Warning";
-        case SMART_HEALTH_FAILING:   return "Failing";
-        case SMART_HEALTH_PREFAIL:   return "Pre-fail";
-        case SMART_HEALTH_UNKNOWN:   return "Unknown";
-        default:                     return "Undefined Status";
+        case SMART_HEALTH_OK: return "OK";
+        case SMART_HEALTH_WARNING: return "Warning";
+        case SMART_HEALTH_FAILING: return "Failing";
+        case SMART_HEALTH_PREFAIL: return "Prefail";
+        case SMART_HEALTH_UNKNOWN: return "Unknown";
+        default: return "N/A";
     }
 }
 
+// Stub implementation for display_drive_info
+// This function will be expanded to show detailed information about the drive.
 void display_drive_info(const char *device_path) {
     if (device_path == NULL) {
         fprintf(stderr, "Oops! DiskOracle needs a device path to display its information. Please provide one.\n");
@@ -25,6 +29,7 @@ void display_drive_info(const char *device_path) {
     printf("----------------------------------------------------------\n");
 
     BasicDriveInfo drive_info;
+    // pal_get_basic_drive_info should initialize the struct, but defensive zeroing is fine.
     memset(&drive_info, 0, sizeof(BasicDriveInfo)); 
 
     if (pal_get_basic_drive_info(device_path, &drive_info)) {
@@ -34,10 +39,10 @@ void display_drive_info(const char *device_path) {
         printf("  Bus Type:      %s\n", drive_info.bus_type);
     } else {
         printf("  Hmm, DiskOracle couldn\'t retrieve basic drive information (model, serial, type).\n");
-        strncpy(drive_info.model, "Unknown", sizeof(drive_info.model) -1);
-        strncpy(drive_info.serial, "Unknown", sizeof(drive_info.serial) -1);
-        strncpy(drive_info.type, "Unknown", sizeof(drive_info.type) -1);
-        strncpy(drive_info.bus_type, "Unknown", sizeof(drive_info.bus_type) -1);
+        // Still try to get size and SMART data if basic info fails
+        strncpy_s(drive_info.model, sizeof(drive_info.model), "Unknown", _TRUNCATE);
+        strncpy_s(drive_info.serial, sizeof(drive_info.serial), "Unknown", _TRUNCATE);
+        strncpy_s(drive_info.bus_type, sizeof(drive_info.bus_type), "Unknown", _TRUNCATE);
     }
 
     int64_t size_bytes = pal_get_device_size(device_path);
@@ -55,12 +60,18 @@ void display_drive_info(const char *device_path) {
     
     printf("\nSMART Information:\n");
     struct smart_data s_data;
-    memset(&s_data, 0, sizeof(s_data));
-    if (smart_read(device_path, &s_data) == 0) {
-        SmartHealthStatus health_status = smart_get_health_summary(&s_data);
+    if (smart_read(device_path, drive_info.model, drive_info.serial, &s_data) == 0) {
+        printf("  SMART Data Readable: Yes\n");
+        SmartStatus health_status = smart_get_health_summary(&s_data);
         printf("  SMART Health Status: %s\n", smart_status_to_string(health_status));
+
+        // Optionally, print a few key attributes if available (example)
+        if (!s_data.is_nvme && s_data.attr_count > 0) {
+
+        }
     } else {
-        printf("  SMART Health Status: DiskOracle couldn\'t retrieve SMART data for this drive.\n");
+        printf("  SMART Data Readable: No (or error reading)\n");
+        printf("  SMART Health Status: N/A\n");
     }
 
     printf("----------------------------------------------------------\n");
