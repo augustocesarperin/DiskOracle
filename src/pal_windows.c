@@ -6,7 +6,6 @@
 #include "logging.h"
 #include "smart.h"
 #include "info.h"
-#include "project_config.h"
 #include <stdio.h>
 #include <string.h> 
 #include <ctype.h>  
@@ -154,7 +153,7 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
         if (attr_id == 0) {
             continue;
         }
-        
+
         // Extract attribute values
         BYTE flags_lo = smart_read_buf.DataBuf[offset + 1];
         BYTE flags_hi = smart_read_buf.DataBuf[offset + 2];
@@ -219,8 +218,8 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
     
     out->attr_count = attr_count;
     
-    return PAL_STATUS_SUCCESS;
-}
+            return PAL_STATUS_SUCCESS; 
+        }
 
 // Define the standard size for NVMe SMART/Health Information Log Page (LID 02h)
 #define NVME_LOG_PAGE_SIZE_BYTES 512

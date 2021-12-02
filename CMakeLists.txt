@@ -53,6 +53,9 @@ endif()
 
 add_executable(${EXECUTABLE_NAME} ${MAIN_SOURCES})
 
+# Adiciona o diretório de build aos includes para encontrar project_config.h
+target_include_directories(${EXECUTABLE_NAME} PRIVATE "${PROJECT_BINARY_DIR}")
+
 # Bibliotecas específicas da plataforma
 if(WIN32)
     target_link_libraries(${EXECUTABLE_NAME} PRIVATE ws2_32 setupapi)
