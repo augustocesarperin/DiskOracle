@@ -10,6 +10,7 @@
 #include <stdint.h> // For int64_t
 #include <stdbool.h> // For bool type
 #include "smart.h"   // For struct smart_data
+#include "info.h"    // For struct smart_data
 
 #define PAL_API
 
@@ -46,18 +47,6 @@ typedef struct {
     int64_t size_bytes;    // Drive size in bytes - populated from pal_get_device_size
     bool is_ssd;           // Optional: True if known to be an SSD/NVMe from listing info
 } pal_drive_info_t;
-
-// Structure to hold basic drive identification and capability information
-typedef struct {
-    char model[256];
-    char serial[128]; 
-    char type[32];       // e.g., "HDD", "SSD", "NVMe", "Unknown"
-    char bus_type[32];   // e.g., "ATA", "SCSI", "NVMe", "USB", "Unknown"
-    bool is_ssd;         // True if the drive is likely an SSD or NVMe
-    char firmware_rev[64]; // Drive firmware revision
-    bool smart_capable;  // Indicates if SMART features are generally supported/accessible
-    // Note: Drive size is not included here, use pal_get_device_size() for that.
-} BasicDriveInfo;
 
 // Platform Abstraction Layer interface
 
@@ -122,6 +111,15 @@ PAL_API void pal_cleanup(void);
 
 PAL_API int pal_get_ssd_wear_status(const struct smart_data *sd, int *wear_percentage, int *wear_status_code);
 PAL_API const char* pal_get_wear_status_string(int wear_status_code);
+
+/**
+ * @brief Obtém as dimensões atuais da janela do console/terminal.
+ * 
+ * @param width Ponteiro para um inteiro que receberá a largura em colunas.
+ * @param height Ponteiro para um inteiro que receberá a altura em linhas.
+ * @return pal_status_t PAL_STATUS_SUCCESS em caso de sucesso.
+ */
+PAL_API pal_status_t pal_get_terminal_size(int* width, int* height);
 
 // Funções PAL específicas do Windows
 #if defined(_WIN32)

@@ -431,24 +431,15 @@ pal_status_t pal_get_basic_drive_info(const char *device_path, BasicDriveInfo *i
     }
 
     memset(info, 0, sizeof(BasicDriveInfo));
-    strncpy(info->model, "Unknown", sizeof(info->model) - 1);
-    info->model[sizeof(info->model)-1] = '\0'; 
-    strncpy(info->serial, "Unknown", sizeof(info->serial) - 1);
-    info->serial[sizeof(info->serial)-1] = '\0'; 
-    strncpy(info->type, "Unknown", sizeof(info->type) - 1);
-    info->type[sizeof(info->type)-1] = '\0'; 
-    strncpy(info->bus_type, "Unknown", sizeof(info->bus_type) - 1);
-    info->bus_type[sizeof(info->bus_type)-1] = '\0';
 
-    HANDLE hDevice = CreateFileA(device_path,
-                               GENERIC_READ, // Changed from 0 to GENERIC_READ
-                               FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               NULL,
-                               OPEN_EXISTING,
-                               0, // dwFlagsAndAttributes, 0 is fine for this purpose
-                               NULL);
+    // Copia o caminho do dispositivo para a estrutura de informações
+    strcpy_s(info->path, sizeof(info->path), device_path);
+
+    HANDLE hDevice = CreateFileA(device_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 NULL, OPEN_EXISTING, 0, NULL);
+
     if (hDevice == INVALID_HANDLE_VALUE) {
-        return PAL_STATUS_DEVICE_OPEN_FAILED;
+        return PAL_STATUS_ERROR;
     }
 
     STORAGE_PROPERTY_QUERY query_desc_prop;
@@ -472,31 +463,31 @@ pal_status_t pal_get_basic_drive_info(const char *device_path, BasicDriveInfo *i
     if (success_desc && bytes_returned_desc_ioctl > 0) {
         STORAGE_DEVICE_DESCRIPTOR *sdd_desc = (STORAGE_DEVICE_DESCRIPTOR *)buffer_desc;
         if (sdd_desc->ProductIdOffset > 0 && sdd_desc->ProductIdOffset < sizeof(buffer_desc)) {
-            strncpy(info->model, (char*)buffer_desc + sdd_desc->ProductIdOffset, sizeof(info->model) - 1);
-            info->model[sizeof(info->model)-1] = '\0';
-            trim_trailing_spaces(info->model);
+            char* model_name_ptr = (char*)buffer_desc + sdd_desc->ProductIdOffset;
+            trim_trailing_spaces(model_name_ptr);
+            strncpy_s(info->model, sizeof(info->model), model_name_ptr, _TRUNCATE);
         }
         if (sdd_desc->SerialNumberOffset > 0 && sdd_desc->SerialNumberOffset < sizeof(buffer_desc)) {
-            strncpy(info->serial, (char*)buffer_desc + sdd_desc->SerialNumberOffset, sizeof(info->serial) - 1);
-            info->serial[sizeof(info->serial)-1] = '\0';
-            trim_trailing_spaces(info->serial);
+            char* serial_ptr = (char*)buffer_desc + sdd_desc->SerialNumberOffset;
+            trim_trailing_spaces(serial_ptr);
+            strncpy_s(info->serial, sizeof(info->serial), serial_ptr, _TRUNCATE);
         }
         switch (sdd_desc->BusType) {
-            case BusTypeSata: strncpy(info->bus_type, "SATA", sizeof(info->bus_type) - 1); break;
-            case BusTypeScsi: strncpy(info->bus_type, "SCSI", sizeof(info->bus_type) - 1); break;
-            case BusTypeAtapi: strncpy(info->bus_type, "ATAPI", sizeof(info->bus_type) - 1); break;
-            case BusTypeAta: strncpy(info->bus_type, "ATA", sizeof(info->bus_type) - 1); break;
-            case BusTypeUsb: strncpy(info->bus_type, "USB", sizeof(info->bus_type) - 1); break;
-            case BusType1394: strncpy(info->bus_type, "1394", sizeof(info->bus_type) - 1); break;
-            case BusTypeSsa: strncpy(info->bus_type, "SSA", sizeof(info->bus_type) - 1); break;
-            case BusTypeFibre: strncpy(info->bus_type, "Fibre Channel", sizeof(info->bus_type) - 1); break;
-            case BusTypeRAID: strncpy(info->bus_type, "RAID", sizeof(info->bus_type) - 1); break;
-            case BusTypeNvme: strncpy(info->bus_type, "NVMe", sizeof(info->bus_type) - 1); break;
-            case BusTypeSd: strncpy(info->bus_type, "SD", sizeof(info->bus_type) - 1); break;
-            case BusTypeMmc: strncpy(info->bus_type, "MMC", sizeof(info->bus_type) - 1); break;
-            case BusTypeVirtual: strncpy(info->bus_type, "Virtual", sizeof(info->bus_type) - 1); break;
-            case BusTypeFileBackedVirtual: strncpy(info->bus_type, "File Backed Virtual", sizeof(info->bus_type) - 1); break;
-            default: strncpy(info->bus_type, "Other", sizeof(info->bus_type) - 1); break;
+            case BusTypeSata: strncpy_s(info->bus_type, sizeof(info->bus_type), "SATA", _TRUNCATE); break;
+            case BusTypeScsi: strncpy_s(info->bus_type, sizeof(info->bus_type), "SCSI", _TRUNCATE); break;
+            case BusTypeAtapi: strncpy_s(info->bus_type, sizeof(info->bus_type), "ATAPI", _TRUNCATE); break;
+            case BusTypeAta: strncpy_s(info->bus_type, sizeof(info->bus_type), "ATA", _TRUNCATE); break;
+            case BusTypeUsb: strncpy_s(info->bus_type, sizeof(info->bus_type), "USB", _TRUNCATE); break;
+            case BusType1394: strncpy_s(info->bus_type, sizeof(info->bus_type), "1394", _TRUNCATE); break;
+            case BusTypeSsa: strncpy_s(info->bus_type, sizeof(info->bus_type), "SSA", _TRUNCATE); break;
+            case BusTypeFibre: strncpy_s(info->bus_type, sizeof(info->bus_type), "Fibre Channel", _TRUNCATE); break;
+            case BusTypeRAID: strncpy_s(info->bus_type, sizeof(info->bus_type), "RAID", _TRUNCATE); break;
+            case BusTypeNvme: strncpy_s(info->bus_type, sizeof(info->bus_type), "NVMe", _TRUNCATE); break;
+            case BusTypeSd: strncpy_s(info->bus_type, sizeof(info->bus_type), "SD", _TRUNCATE); break;
+            case BusTypeMmc: strncpy_s(info->bus_type, sizeof(info->bus_type), "MMC", _TRUNCATE); break;
+            case BusTypeVirtual: strncpy_s(info->bus_type, sizeof(info->bus_type), "Virtual", _TRUNCATE); break;
+            case BusTypeFileBackedVirtual: strncpy_s(info->bus_type, sizeof(info->bus_type), "File Backed Virtual", _TRUNCATE); break;
+            default: strncpy_s(info->bus_type, sizeof(info->bus_type), "Other", _TRUNCATE); break;
         }
         info->bus_type[sizeof(info->bus_type)-1] = '\0';
 
@@ -516,20 +507,12 @@ pal_status_t pal_get_basic_drive_info(const char *device_path, BasicDriveInfo *i
                               &bytes_returned_penalty, 
                               NULL) && bytes_returned_penalty >= sizeof(DEVICE_SEEK_PENALTY_DESCRIPTOR)) {
             if (penalty_desc.IncursSeekPenalty) {
-                strncpy(info->type, "HDD", sizeof(info->type) - 1);
+                strncpy_s(info->type, sizeof(info->type), "HDD", _TRUNCATE);
             } else {
-                 if (sdd_desc->BusType == BusTypeNvme) {
-                     strncpy(info->type, "NVMe", sizeof(info->type) - 1);
-                } else {
-                     strncpy(info->type, "SSD", sizeof(info->type) - 1);
-                }
+                strncpy_s(info->type, sizeof(info->type), sdd_desc->BusType == BusTypeNvme ? "NVMe" : "SSD", _TRUNCATE);
             }
         } else {
-             if (sdd_desc->BusType == BusTypeNvme) {
-                 strncpy(info->type, "NVMe", sizeof(info->type) - 1);
-            } else {
-                 strncpy(info->type, "Unknown (SeekTypeFail)", sizeof(info->type) -1);
-            }
+            strncpy_s(info->type, sizeof(info->type), sdd_desc->BusType == BusTypeNvme ? "NVMe" : "Unknown (SeekTypeFail)", _TRUNCATE);
         }
         info->type[sizeof(info->type)-1] = '\0';
         info->smart_capable = true; 
@@ -1061,4 +1044,25 @@ pal_status_t pal_list_drives(pal_drive_info_t *drive_list, int max_drives, int *
     }
     return PAL_STATUS_SUCCESS;
 }
+
+PAL_API pal_status_t pal_get_terminal_size(int* width, int* height) {
+    if (width == NULL || height == NULL) {
+        return PAL_STATUS_INVALID_PARAMETER;
+    }
+
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    HANDLE hStdOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    if (hStdOut == INVALID_HANDLE_VALUE) {
+        return PAL_STATUS_ERROR;
+    }
+
+    if (GetConsoleScreenBufferInfo(hStdOut, &csbi)) {
+        *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+        return PAL_STATUS_SUCCESS;
+    }
+
+    return PAL_STATUS_ERROR;
+}
+
 #endif // _WIN32

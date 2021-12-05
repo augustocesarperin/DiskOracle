@@ -3,6 +3,7 @@
 #include <string.h>
 #include <stdbool.h>
 #include <locale.h>
+#include "config.h"
 #include "pal.h"
 #include "smart.h"
 #include "surface.h"
@@ -12,10 +13,10 @@
 #include "report.h"
 #include "../include/nvme_hybrid.h"
 #include "nvme_export.h"
-#include "project_config.h"
 #include "nvme_orchestrator.h"
 #include "commands.h"
 #include "style.h"
+#include "ui.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -33,6 +34,10 @@ static const char* disk_oracle_subtitle_text[] = {
     " Developed by Augusto Cesar Perin - 2020",
     NULL
 };
+
+// Variável global para este arquivo, para armazenar o estado final do scan.
+// Uma solução mais avançada poderia usar um ponteiro no user_data.
+static scan_state_t g_final_scan_state;
 
 void print_enumerated_drives(pal_drive_info_t *drive_list, int drive_count) {
     printf("\n~~~ Available Drives ~~~\n"); 
@@ -134,6 +139,14 @@ void print_usage(const char *app_name) {
     fflush(stdout);
 }
 
+// Função de "ponte" que conecta o callback do scan com a função de desenho da UI
+void main_scan_callback(const scan_state_t* state, void* user_data) {
+    BasicDriveInfo* drive_info = (BasicDriveInfo*)user_data;
+    ui_draw_scan_progress(state, drive_info);
+    // Copia o estado atual para ser usado no relatório final
+    memcpy(&g_final_scan_state, state, sizeof(scan_state_t));
+}
+
 int main(int argc, char *argv[]) {
     style_init();
 
@@ -148,119 +161,42 @@ int main(int argc, char *argv[]) {
     // atexit(nvme_cache_global_cleanup); // Optional
     int main_ret_code = 0; // Default exit code
 
-    if (argc == 1) {
+    if (argc < 2) {
         print_welcome_screen();
-        pal_drive_info_t drive_list[16];
-        int drive_count = 0;
-        pal_status_t list_status = pal_list_drives(drive_list, 16, &drive_count);
-        if (list_status == PAL_STATUS_SUCCESS) {
-            print_enumerated_drives(drive_list, drive_count);
-        } else {
-            fprintf(stderr, "Error: Failed to list drives. PAL Status: %d\n", list_status);
-        }
-        print_usage(argv[0]); 
-    } else if (strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "/?") == 0) {
-        print_welcome_screen(); 
-        print_usage(argv[0]); 
-    } else if (strcmp(argv[1], "--list-drives") == 0) {
-        print_welcome_screen();
-        pal_drive_info_t drive_list[16];
-        int drive_count = 0;
-        pal_status_t list_status = pal_list_drives(drive_list, 16, &drive_count);
-        if (list_status == PAL_STATUS_SUCCESS) {
-            print_enumerated_drives(drive_list, drive_count);
-        } else {
-            fprintf(stderr, "Error: Failed to list drives. PAL Status: %d\n", list_status);
-            main_ret_code = EXIT_FAILURE;
-        }
-    } else if (strcmp(argv[1], "--smart") == 0) {
-        if (argc == 3) {
-            const char* device_path = argv[2];
-            main_ret_code = execute_smart_command(device_path);
-        } else {
-            fprintf(stderr, "Error: Missing device_path for --smart command.\n");
-            print_usage(argv[0]);
-            main_ret_code = EXIT_FAILURE;
-        }
-    } else if (strcmp(argv[1], "--disk") == 0) {
-        if (argc == 3) {
-            long disk_index = strtol(argv[2], NULL, 10);
-
-            pal_drive_info_t drive_list[16];
-            int drive_count = 0;
-            pal_status_t list_status = pal_list_drives(drive_list, 16, &drive_count);
-
-            if (list_status == PAL_STATUS_SUCCESS) {
-                if (disk_index >= 0 && disk_index < drive_count) {
-                    const char* device_path = drive_list[disk_index].device_path;
-                    printf(">>> Executing --smart for disk at index %ld: %s\n", disk_index, device_path);
-                    main_ret_code = execute_smart_command(device_path);
-                } else {
-                    fprintf(stderr, "Error: Invalid disk index %ld. Must be between 0 and %d.\n", disk_index, drive_count - 1);
-                    print_enumerated_drives(drive_list, drive_count);
-                    main_ret_code = EXIT_FAILURE;
-                }
-            } else {
-                fprintf(stderr, "Error: Failed to list drives to use --disk shortcut. PAL Status: %d\n", list_status);
-                main_ret_code = EXIT_FAILURE;
-            }
-        } else {
-            fprintf(stderr, "Error: Missing index for --disk command.\n");
-            print_usage(argv[0]);
-            main_ret_code = EXIT_FAILURE;
-        }
-    } else if (strcmp(argv[1], "--smart-json") == 0) {
-        if (argc >= 3) {
-            const char* device_path = argv[2];
-            const char* output_file = (argc == 4) ? argv[3] : NULL;
-            main_ret_code = execute_json_export_command(device_path, output_file);
-        } else {
-            fprintf(stderr, "Error: Missing device_path for --smart-json command.\n");
-            print_usage(argv[0]);
-            main_ret_code = EXIT_FAILURE;
-        }
-    } else if (strcmp(argv[1], "--surface") == 0) {
-        if (argc >= 3) {
-            const char* device_path = argv[2];
-            const char* scan_type = "quick"; // Default to quick scan
-            
-            // Check for optional --type argument
-            if (argc == 5 && strcmp(argv[3], "--type") == 0) {
-            scan_type = argv[4];
-        }
-        
-        SurfaceScanResult scan_result;
-        int scan_status = surface_scan(device_path, scan_type, &scan_result);
-
-            if (scan_status == 0) {
-                printf("\n--- Surface Scan Report for %s ---\n", device_path);
-                printf("  Scan Type:               %s\n", scan_type);
-                printf("  Scan Time:               %.2f seconds\n", scan_result.scan_time_seconds);
-                printf("  Total Blocks Scanned:    %llu\n", (unsigned long long)scan_result.total_sectors_scanned);
-                printf("  Bad Blocks Found:        %llu\n", (unsigned long long)scan_result.bad_sectors_found);
-                printf("  Read Errors:             %llu\n", (unsigned long long)scan_result.read_errors);
-                printf("  Status:                  %s\n", scan_result.status_message);
-                printf("-----------------------------------------\n");
-                main_ret_code = (scan_result.bad_sectors_found > 0 || scan_result.read_errors > 0) ? EXIT_FAILURE : EXIT_SUCCESS;
-        } else {
-                fprintf(stderr, "\nError: Surface scan failed to execute.\n");
-                fprintf(stderr, "  Reason: %s\n", scan_result.status_message);
-                main_ret_code = EXIT_FAILURE;
-        }
-        } else {
-            fprintf(stderr, "Error: Missing device_path for --surface command.\n");
-            print_usage(argv[0]);
-            main_ret_code = EXIT_FAILURE;
-        }
-    } else {
-        print_welcome_screen();
-        fprintf(stderr, "Error: Unknown command or arguments.\n\n");
-        print_usage(argv[0]);
-        main_ret_code = EXIT_FAILURE;
+        return 0;
     }
 
-    pal_cleanup();
-    nvme_cache_global_cleanup();
+    if (strcmp(argv[1], "--info") == 0) {
+        // ... (lógica do --info)
+    } else if (strcmp(argv[1], "--surface") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Error: --surface requires a device path.\n");
+            return 1;
+        }
+        const char* device_path = argv[2];
+        
+        BasicDriveInfo drive_info;
+        if (pal_get_basic_drive_info(device_path, &drive_info) != PAL_STATUS_SUCCESS) {
+            fprintf(stderr, "Error: Could not get basic info for device %s\n", device_path);
+            return 1;
+        }
+
+        ui_init();
+        
+        // Zera o estado global antes de iniciar
+        memset(&g_final_scan_state, 0, sizeof(scan_state_t));
+        g_final_scan_state.start_time = time(NULL); // Garante que o tempo de início seja registrado
+
+        surface_scan(device_path, "quick", main_scan_callback, &drive_info);
+        
+        ui_cleanup();
+        
+        // Exibe o relatório final usando o último estado capturado
+        ui_display_scan_report(&g_final_scan_state, &drive_info);
+
+    } else {
+        print_usage(argv[0]);
+    }
 
     return main_ret_code;
 }

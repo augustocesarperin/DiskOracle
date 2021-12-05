@@ -1,6 +1,8 @@
-# Build artifacts
-build/
-CMakeFiles/
+
+[Bb]uild*/
+[Cc]make*/
+[Dd]ebug/
+[Rr]elease/
 *.vcxproj
 *.vcxproj.filters
 *.sln
@@ -13,6 +15,8 @@ cmake_install.cmake
 CMakeCache.txt
 Testing/
 DartConfiguration.tcl
+Makefile
+install_manifest.txt
 
 # Logs
 logs/
@@ -20,6 +24,7 @@ logs/
 
 # Editor/IDE specific files
 .vscode/
+.spectory/
 
 # OS specific files
 .DS_Store
@@ -35,4 +40,5 @@ Thumbs.db
 *.a
 
 # Generated reports
-reports/ 
+reports/
+*.json 
