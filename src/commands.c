@@ -10,6 +10,8 @@
 #include "../include/nvme_hybrid.h"
 #include "nvme_export.h"
 #include "style.h"
+#include "ui.h"
+#include "info.h"
 
 int execute_smart_command(const char* device_path) {
     struct smart_data s_data;
@@ -20,7 +22,10 @@ int execute_smart_command(const char* device_path) {
     pal_status_t basic_info_status = pal_get_basic_drive_info(device_path, &basic_info);
 
     if (basic_info_status != PAL_STATUS_SUCCESS) {
-        fprintf(stderr, "Error: Failed to retrieve basic device information for %s. PAL Status: %d\n", device_path, basic_info_status);
+        fprintf(stderr, "Error: Failed to retrieve basic device information for %s.\n", device_path);
+        style_set_fg(COLOR_MAGENTA);
+        fprintf(stderr, "Oracle's Whisper: %s\n", pal_get_error_string(basic_info_status));
+        style_reset();
         return EXIT_FAILURE;
     } 
 
@@ -35,19 +40,24 @@ int execute_smart_command(const char* device_path) {
         smart_status = nvme_orchestrator_get_smart_data(device_path, &s_data, &hybrid_ctx);
 
         if (smart_status != PAL_STATUS_SUCCESS) {
+            #if defined(_DEBUG)
             fprintf(stderr, "Error: NVMe Orchestrator failed for %s. Status: %d. Method attempted: %s\n",
                     device_path, smart_status, hybrid_ctx.last_operation_result.method_name);
+            #endif
         }
         s_data.is_nvme = true;
     } else if (basic_info.bus_type[0] != '\0' && (strcmp(basic_info.bus_type, "ATA") == 0 || strcmp(basic_info.bus_type, "SATA") == 0)) {
         int pal_ata_status = pal_get_smart_data(device_path, &s_data);
         smart_status = (pal_ata_status == 0) ? PAL_STATUS_SUCCESS : PAL_STATUS_IO_ERROR;
          if (smart_status != PAL_STATUS_SUCCESS) {
-            fprintf(stderr, "Error: Failed to get SMART data for ATA drive %s (Standard PAL call). PAL_GET_SMART_DATA_STATUS: %d\n", device_path, pal_ata_status);
+            fprintf(stderr, "Error: Failed to get S.M.A.R.T. data for ATA drive %s.\n", device_path);
+            style_set_fg(COLOR_MAGENTA);
+            fprintf(stderr, "Oracle's Whisper: %s\n", pal_get_error_string(smart_status));
+            style_reset();
         }
         s_data.is_nvme = false;
     } else {
-        fprintf(stderr, "Error: Unknown or unsupported drive bus_type ('%s') for SMART query on %s\n",
+        fprintf(stderr, "Error: Unknown or unsupported drive bus_type ('%s') for S.M.A.R.T. query on %s\n",
                 basic_info.bus_type, device_path);
         return EXIT_FAILURE;
     }
@@ -55,7 +65,7 @@ int execute_smart_command(const char* device_path) {
     if (smart_status == PAL_STATUS_SUCCESS) {
         bool data_truly_available = s_data.is_nvme ? true : (s_data.attr_count > 0);
         if (data_truly_available) {
-            smart_interpret(device_path, &s_data);
+            smart_interpret(device_path, &s_data, basic_info.firmware_rev);
 
             SmartStatus health_summary = smart_get_health_summary(&s_data);
             printf("\nOverall Drive Health Summary: ");
@@ -101,7 +111,10 @@ int execute_smart_command(const char* device_path) {
              return EXIT_FAILURE;
         }
     } else {
-        fprintf(stderr, "Error: Failed to fetch or process SMART data for %s (Overall Status: %d).\nPlease ensure the device path is correct, the application has necessary permissions, and the drive type is supported.\n", device_path, smart_status);
+        fprintf(stderr, "Error: Failed to fetch S.M.A.R.T. data for %s.\n", device_path);
+        style_set_fg(COLOR_MAGENTA);
+        fprintf(stderr, "Oracle's Whisper: %s\n", pal_get_error_string(smart_status));
+        style_reset();
         return EXIT_FAILURE;
     }
 }
@@ -111,7 +124,10 @@ int execute_json_export_command(const char* device_path, const char* output_file
     memset(&basic_info, 0, sizeof(BasicDriveInfo));
     pal_status_t basic_info_status = pal_get_basic_drive_info(device_path, &basic_info);
     if (basic_info_status != PAL_STATUS_SUCCESS) {
-        fprintf(stderr, "Warning: Failed to get basic drive info for %s. JSON output may be incomplete. PAL Status: %d\n", device_path, basic_info_status);
+        fprintf(stderr, "Warning: Failed to get basic drive info for %s. JSON output may be incomplete.\n", device_path);
+        style_set_fg(COLOR_MAGENTA);
+        fprintf(stderr, "Oracle's Whisper: %s\n", pal_get_error_string(basic_info_status));
+        style_reset();
         // Continue execution as some data might still be exportable
     }
 
@@ -164,4 +180,68 @@ int execute_json_export_command(const char* device_path, const char* output_file
     }
 
     return (export_result == PAL_STATUS_SUCCESS) ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+int handle_list_drives(int argc, char* argv[]) {
+    (void)argc; (void)argv;
+    
+    DriveInfo drives[MAX_DRIVES];
+    int drive_count = 0;
+    
+    pal_status_t status = pal_list_drives(drives, MAX_DRIVES, &drive_count);
+
+    if (status != PAL_STATUS_SUCCESS) {
+        fprintf(stderr, "Error: Failed to list drives.\n");
+        return 1;
+    }
+    
+    display_drive_list(drives, drive_count);
+    
+    return 0;
+}
+
+int handle_surface_scan(int argc, char* argv[]) {
+    if (argc < 3) {
+        style_set_fg(COLOR_BRIGHT_YELLOW);
+        fprintf(stderr, "The Oracle requires a focus, a sacrifice... a device path.\n");
+        style_reset();
+        fprintf(stderr, "Usage: diskoracle --surface <device_path>\n");
+        return 1;
+    }
+    // Chama a nova função dedicada para o scan de superfície.
+    run_surface_scan_command(argv[2]);
+    return 0;
+}
+
+int handle_smart(int argc, char* argv[]) {
+    if (argc < 3) {
+        style_set_fg(COLOR_BRIGHT_YELLOW);
+        fprintf(stderr, "To read the digital entrails, you must present the Oracle with a device path.\n");
+        style_reset();
+        fprintf(stderr, "Usage: diskoracle --smart <device_path>\n");
+        return 1;
+    }
+    // Chama a função de execução principal que contém a lógica de erro aprimorada.
+    return execute_smart_command(argv[2]);
+}
+
+// Handler para o comando --smart-json
+int handle_smart_json(int argc, char* argv[]) {
+    if (argc < 3) {
+        style_set_fg(COLOR_BRIGHT_YELLOW);
+        fprintf(stderr, "The Oracle cannot weave prophecies into JSON without a device path.\n");
+        style_reset();
+        fprintf(stderr, "Usage: diskoracle --smart-json <device_path> [output_file]\n");
+        return 1;
+    }
+    const char* device_path = argv[2];
+    const char* output_file = (argc > 3) ? argv[3] : NULL; // Arquivo de saída é opcional
+
+    return execute_json_export_command(device_path, output_file);
+}
+
+int handle_help(int argc, char* argv[]) {
+    // Calls the help display function implemented in main.c
+    print_full_help();
+    return 0; 
 } 

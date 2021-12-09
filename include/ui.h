@@ -1,21 +1,47 @@
 #ifndef UI_H
 #define UI_H
 
-#include "info.h"
-#include "surface.h" // Para scan_state_t
-#include <stdint.h>
-#include <time.h>
+#include "info.h" // Para as estruturas DriveInfo, etc.
+#include "surface.h"
 
-// Função para inicializar o ambiente da UI (ex: limpar tela, esconder cursor)
-void ui_init(void);
+// === Funções de Exibição de UI ===
 
-// Função para encerrar a UI e restaurar o terminal
-void ui_cleanup(void);
+/**
+ * @brief Exibe a tela de boas-vindas com a arte ASCII.
+ */
+void print_welcome_screen(void);
 
-// Função principal para desenhar a interface de scan
+/**
+ * @brief Exibe a mensagem de ajuda completa.
+ */
+void print_full_help(void);
+
+/**
+ * @brief Exibe uma mensagem curta de uso (para erros de comando).
+ */
+void print_usage(void);
+
+/**
+ * @brief Exibe uma lista formatada de drives.
+ *
+ * @param drives Um array de estruturas DriveInfo.
+ * @param drive_count O número de drives no array.
+ */
+void display_drive_list(const DriveInfo* drives, int drive_count);
+
+/**
+ * @brief Exibe uma tabela formatada com as informações básicas de um drive.
+ *
+ * @param drive_info Um ponteiro para a estrutura BasicDriveInfo.
+ */
+void ui_draw_drive_info(const BasicDriveInfo* drive_info);
+
+// Adicionando as declarações que faltavam
 void ui_draw_scan_progress(const scan_state_t* state, const BasicDriveInfo* drive_info);
-
-// Função para exibir o relatório final do scan
 void ui_display_scan_report(const scan_state_t* state, const BasicDriveInfo* drive_info);
+
+// Adicionando as declarações que faltavam para a UI interativa
+void ui_init(void);
+void ui_cleanup(void);
 
 #endif // UI_H 

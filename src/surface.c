@@ -4,6 +4,8 @@
 #include <string.h>
 #include <time.h>
 #include "pal.h"
+#include <stdlib.h> // Para malloc/free
+#include "logging.h" // Para DEBUG_PRINT
 
 #ifdef _WIN32
 #include <windows.h>
@@ -20,7 +22,7 @@ typedef SSIZE_T ssize_t;
 #define BUFFER_ALIGNMENT 4096
 
 // Função interna para o scan rápido, agora com callback
-static int surface_scan_quick(const char *device, SurfaceScanResult *result, scan_progress_callback_t callback, void* user_data) {
+static int surface_scan_quick(const char *device, SurfaceScanResult *result, scan_callback_t callback, void* user_data) {
 #ifdef _WIN32
     LARGE_INTEGER freq, start_time, end_time;
     QueryPerformanceFrequency(&freq);
@@ -120,7 +122,6 @@ static int surface_scan_quick(const char *device, SurfaceScanResult *result, sca
         
         state.scanned_blocks = i + 1;
         if (bytes_read < 0) {
-            state.read_errors++;
             state.bad_blocks++;
         }
         
@@ -294,7 +295,7 @@ static int surface_scan_deep(const char *device, SurfaceScanResult *result) {
 
 
 // Função principal exportada, que chama as funções internas
-int surface_scan(const char *device_path, const char *scan_type, scan_progress_callback_t callback, void* user_data) {
+int surface_scan(const char *device_path, const char *scan_type, scan_callback_t callback, void* user_data) {
     SurfaceScanResult result;
     memset(&result, 0, sizeof(result));
     

@@ -3,35 +3,26 @@
 
 #include <stdint.h>
 #include <stdbool.h>
-#include "pal_types.h"
 
 #if defined(_WIN32) || defined(__MINGW32__)
-    // Ensure windows.h is included for basic Windows types (UCHAR, ULONG etc.)
-    // before nvme.h, as MinGW's nvme.h depends on them.
     #include <windows.h>
-    // Ensure nvme.h is included for NVME_HEALTH_INFO_LOG definition
-    // This is needed because struct smart_nvme uses this type directly.
     #include <nvme.h>
 #endif
 
 #define MAX_SMART_ATTRIBUTES 30
-// #define MAX_ATA_ATTRIBUTES 30 // MAX_SMART_ATTRIBUTES será usado para consistência
 
-// Definindo os tipos de drive aqui para serem usados em smart_data
 #define DRIVE_TYPE_UNKNOWN 0
 #define DRIVE_TYPE_ATA 1
 #define DRIVE_TYPE_NVME 2
 
-// Health prediction status (consistent with previous definitions)
 typedef enum {
     SMART_HEALTH_OK,         // 0
     SMART_HEALTH_WARNING,    // 1
     SMART_HEALTH_PREFAIL,    // 2
     SMART_HEALTH_FAILING,    // 3
     SMART_HEALTH_UNKNOWN     // 4
-} SmartStatus; // Renamed from SmartHealthStatus for brevity and consistency
+} SmartStatus; // Renamed from SmartHealthStatus 
 
-// Individual ATA SMART attribute structure (as per latest understanding)
 struct smart_attr {
     uint8_t id;
     char name[32];
@@ -49,10 +40,6 @@ struct smart_attr {
 #define SMART_ATTR_FLAG_ERROR_RATE          0x0008 // Attribute relates to error rates
 #define SMART_ATTR_FLAG_EVENT_COUNT         0x0010 // Attribute is an event counter
 #define SMART_ATTR_FLAG_SELF_PRESERVING     0x0020 // Attribute is self-preserving (value should not decrease)
-
-// NVMe SMART specific data structure (as per latest understanding)
-// The full definition of NVME_HEALTH_INFO_LOG is now expected to be available
-// via pal.h including <nvme.h> before smart.h is included.
 
 struct smart_nvme { // Renamed from smart_nvme_t
     NVME_HEALTH_INFO_LOG raw_health_log; // Changed to use SDK type
@@ -104,32 +91,24 @@ union smart_device_data {
     struct nvme_smart_log nvme_log;
 };
 
-// Main SMART data structure (corrected based on recent file read)
 struct smart_data {
-    int is_nvme;       // Corrigido para int
-    int drive_type;    // Corrigido para int (usará macros DRIVE_TYPE_...)
+    int is_nvme;       
+    int drive_type;
     int attr_count;    // Only relevant for ATA
     union smart_device_data data; 
-    char device_name[256]; // Mantido da versão funcional
-    // Health status pode ser adicionado aqui depois, se necessário
+    char device_name[256]; 
 };
 
 // Function prototypes
 
-// Function to read SMART data from a device using the PAL
-// Implemented in smart.c, calls pal_get_smart_data
+
 int smart_read(const char *device_path, const char *model, const char *serial, struct smart_data *out);
 
-// Implemented in smart.c, main interpretation logic
-// The pal_windows.c and smart_ata.c changes mean this function now handles ATA interpretation directly.
-int smart_interpret(const char *device, struct smart_data *data); 
-
-// Implemented in smart_ata.c, helper to get attribute name (if still used, or logic moved to smart_interpret)
+int smart_interpret(const char* device_path, struct smart_data* data, const char* firmware_rev); 
 const char* ata_attribute_name(uint8_t attr_id);
-
-// Function to get a summary of health (likely in smart.c or a new health.c)
 SmartStatus smart_get_health_summary(const struct smart_data *data);
 
+void smart_get_ata_attribute_name(uint8_t id, char* buffer, int buffer_len);
 
 #endif // SMART_H
 

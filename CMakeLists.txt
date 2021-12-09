@@ -1,6 +1,12 @@
 cmake_minimum_required(VERSION 3.10)
-project(DiskOracle C)
+project(DiskOracle VERSION 1.0.0 LANGUAGES C)
 set(CMAKE_VERBOSE_MAKEFILE ON)
+
+# Configura o arquivo de cabeçalho da versão
+configure_file(
+  "${PROJECT_SOURCE_DIR}/config.h.in"
+  "${PROJECT_BINARY_DIR}/config.h"
+)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED True)
@@ -24,25 +30,26 @@ include_directories(include)
 # Lista completa de arquivos fonte do projeto
 set(MAIN_SOURCES
     src/main.c
+    src/pal.c
     src/smart.c
     src/surface.c
     src/info.c
-    src/predict.c
     src/report.c
     src/style.c
     src/logging.c
     src/nvme_export.c
     src/nvme_alerts.c
-    src/nvme_benchmark.c
-    src/nvme_cache.c
     src/nvme_orchestrator.c
-    src/pal_shared_nvme.c
     src/commands.c
+    src/ui.c
+    src/interactive.c
 )
 
 # Adiciona a implementação da PAL correta para a plataforma
 if(WIN32)
     list(APPEND MAIN_SOURCES src/pal_windows.c)
+    # Adiciona o manifesto do aplicativo para exigir privilégios de administrador
+    list(APPEND MAIN_SOURCES ${CMAKE_SOURCE_DIR}/diskoracle.manifest)
 elseif(UNIX AND NOT APPLE)
     list(APPEND MAIN_SOURCES src/pal_linux.c)
 elseif(APPLE)
@@ -70,3 +77,24 @@ target_compile_definitions(${EXECUTABLE_NAME} PRIVATE "$<$<CONFIG:Debug>:DEBUG>"
 
 # Opcional: alvo de instalação
 install(TARGETS ${EXECUTABLE_NAME} DESTINATION bin)
+
+# ==============================================================================
+# Seção de Empacotamento (Package)
+# ==============================================================================
+# Define os arquivos que devem ser incluídos no pacote de distribuição
+install(FILES
+    README.md
+    LICENSE
+    DESTINATION .
+)
+
+# Configurações do CPack para criar um arquivo .zip
+set(CPACK_GENERATOR "ZIP")
+set(CPACK_PACKAGE_NAME ${PROJECT_NAME})
+set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
+set(CPACK_PACKAGE_VENDOR "DiskOracle Project")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "S.M.A.R.T. and Surface Scan Utility")
+set(CPACK_PACKAGE_FILE_NAME "${CPACK_PACKAGE_NAME}-${CPACK_PACKAGE_VERSION}-windows")
+set(CPACK_INCLUDE_TOPLEVEL_DIRECTORY 0) # Não cria um diretório extra dentro do zip
+
+include(CPack)

@@ -5,9 +5,9 @@
 #include <windows.h>
 #endif
 
-// Sequências de escape ANSI para formatação
 #define ANSI_RESET          "\x1b[0m"
 #define ANSI_BOLD           "\x1b[1m"
+#define ANSI_DIM            "\x1b[2m"
 #define ANSI_FG_BLACK       "\x1b[30m"
 #define ANSI_FG_RED         "\x1b[31m"
 #define ANSI_FG_GREEN       "\x1b[32m"
@@ -45,27 +45,34 @@
 static bool g_style_enabled = false;
 
 void style_init(void) {
+    fprintf(stderr, "[DEBUG_STYLE] style_init() called.\n");
     #ifdef _WIN32
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hOut == INVALID_HANDLE_VALUE) {
+        fprintf(stderr, "[DEBUG_STYLE] Failed to get standard output handle.\n");
         g_style_enabled = false;
         return;
     }
 
     DWORD dwMode = 0;
     if (!GetConsoleMode(hOut, &dwMode)) {
+        fprintf(stderr, "[DEBUG_STYLE] Failed to get console mode.\n");
         g_style_enabled = false;
         return;
     }
+    fprintf(stderr, "[DEBUG_STYLE] Initial console mode is: %lu\n", dwMode);
 
     dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     if (!SetConsoleMode(hOut, dwMode)) {
+        fprintf(stderr, "[DEBUG_STYLE] Failed to set virtual terminal processing mode.\n");
         g_style_enabled = false;
         return;
     }
+    fprintf(stderr, "[DEBUG_STYLE] Successfully set virtual terminal processing mode.\n");
     #endif
 
     g_style_enabled = true;
+    fprintf(stderr, "[DEBUG_STYLE] Style system enabled: %s\n", g_style_enabled ? "true" : "false");
 }
 
 bool style_is_enabled(void) {
@@ -90,7 +97,8 @@ void style_set_fg(term_color_t color) {
         [COLOR_BRIGHT_BLACK] = ANSI_FG_BRIGHT_BLACK, [COLOR_BRIGHT_RED] = ANSI_FG_BRIGHT_RED,
         [COLOR_BRIGHT_GREEN] = ANSI_FG_BRIGHT_GREEN, [COLOR_BRIGHT_YELLOW] = ANSI_FG_BRIGHT_YELLOW,
         [COLOR_BRIGHT_BLUE] = ANSI_FG_BRIGHT_BLUE, [COLOR_BRIGHT_MAGENTA] = ANSI_FG_BRIGHT_MAGENTA,
-        [COLOR_BRIGHT_CYAN] = ANSI_FG_BRIGHT_CYAN, [COLOR_BRIGHT_WHITE] = ANSI_FG_BRIGHT_WHITE
+        [COLOR_BRIGHT_CYAN] = ANSI_FG_BRIGHT_CYAN, [COLOR_BRIGHT_WHITE] = ANSI_FG_BRIGHT_WHITE,
+        [COLOR_DIM] = ANSI_DIM
     };
     printf("%s", fg_codes[color]);
 }

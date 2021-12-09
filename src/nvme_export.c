@@ -4,12 +4,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <strsafe.h>
-#include <time.h>    // Para time_t, strftime, localtime_s
-#include <windows.h> // Para StringCchPrintfA, StringCchCopyA
-#include <inttypes.h> // For PRIu64
-#include "../include/pal.h" // For PAL_STATUS codes
-#include "../include/smart.h" // For struct smart_data
-// Helper para escapar strings JSON (implementação MUITO básica)
+#include <time.h>   
+#include <windows.h> 
+#include <inttypes.h>
+
 static void escape_json_string(const char* input, char* output, size_t out_size) {
     if (!input || !output || out_size == 0) {
         if (output && out_size > 0) output[0] = (char)'\0';
@@ -18,17 +16,16 @@ static void escape_json_string(const char* input, char* output, size_t out_size)
 
     char* out_ptr = output;
     const char* in_ptr = input;
-    size_t remaining_size = out_size - 1; // Leave space for null terminator
+    size_t remaining_size = out_size - 1;
 
     while (*in_ptr && remaining_size > 0) {
         char char_to_escape = *in_ptr;
-        char escape_seq[7] = {0}; // Max \\uXXXX + null
+        char escape_seq[7] = {0}; 
         int seq_len = 0;
 
         switch (char_to_escape) {
             case '"': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\\""); seq_len = 2; break;
             case '\\': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\\\"); seq_len = 2; break;
-            // case '/': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\/"); seq_len = 2; break; // Optional
             case '\b': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\b"); seq_len = 2; break;
             case '\f': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\f"); seq_len = 2; break;
             case '\n': StringCchCopyA(escape_seq, sizeof(escape_seq), "\\n"); seq_len = 2; break;
@@ -39,7 +36,6 @@ static void escape_json_string(const char* input, char* output, size_t out_size)
                     StringCchPrintfA(escape_seq, sizeof(escape_seq), "\\\\u%04X", (unsigned char)char_to_escape);
                     seq_len = 6;
                 } else {
-                    // No escape needed for this character
                 }
                 break;
         }
@@ -50,7 +46,6 @@ static void escape_json_string(const char* input, char* output, size_t out_size)
                 out_ptr += seq_len;
                 remaining_size -= seq_len;
             } else {
-                // Not enough space for escape sequence, truncate
                 break;
             }
         } else {
@@ -60,13 +55,12 @@ static void escape_json_string(const char* input, char* output, size_t out_size)
                 out_ptr++;
                 remaining_size--;
             } else {
-                // Not enough space for character, truncate
                 break;
             }
         }
         in_ptr++;
     }
-    *out_ptr = (char)'\0'; // Null-terminate the output string
+    *out_ptr = (char)'\0'; 
 }
 
 static uint64_t get_nvme_counter_val(const uint8_t counter[16]) {
@@ -88,16 +82,9 @@ int nvme_export_to_json(
     char escaped_str[256];  
     bool first_section_written = false;
 
-    fprintf(stderr, "[DEBUG NVME_EXPORT_JSON] Beginning JSON export for %s\n", device_path ? device_path : "Unknown Device");
-    fflush(stderr);
-
     if (output_file_path) {
-        fprintf(stderr, "[DEBUG NVME_EXPORT_JSON] Output target: %s\n", output_file_path);
-        fflush(stderr);
         errno_t err = fopen_s(&outfile, output_file_path, "w");
         if (err != 0 || !outfile) {
-            fprintf(stderr, "[ERROR NVME_EXPORT_JSON] Failed to open output file: '%s'. Error code: %d\n", output_file_path, err);
-            fflush(stderr);
             return PAL_STATUS_IO_ERROR;
         }
     }
@@ -117,12 +104,10 @@ int nvme_export_to_json(
             // Copy firmware version, ensuring null termination
             memcpy(firmware_str, sdata->data.nvme.firmware, 8);
             firmware_str[8] = (char)'\0';
-            // Trim trailing spaces from firmware string if any
             for (int i = 7; i >= 0 && firmware_str[i] == ' '; i--) {
                 firmware_str[i] = (char)'\0';
             }
         } else {
-            // For ATA or if sdata is not available, use N/A
             StringCchCopyA(firmware_str, sizeof(firmware_str), "N/A");
         }
         escape_json_string(firmware_str, escaped_str, sizeof(escaped_str));
@@ -177,12 +162,10 @@ int nvme_export_to_json(
             
             fprintf(outfile, "  },");
         } else { // ATA SMART Data
-            // TODO: Implementar exportação detalhada para atributos ATA
             fprintf(outfile, "\n  \"smartAttributesAta\": [\n");
             for(int i=0; i < sdata->attr_count && i < MAX_SMART_ATTRIBUTES; ++i) {
                 fprintf(outfile, "    {\n");
                 fprintf(outfile, "      \"id\": %u,\n", sdata->data.attrs[i].id);
-                // Adicionar nome do atributo aqui seria bom (requer mapeamento ID->Nome)
                 fprintf(outfile, "      \"currentValue\": %u,\n", sdata->data.attrs[i].value);
                 fprintf(outfile, "      \"worstValue\": %u,\n", sdata->data.attrs[i].worst);
                 fprintf(outfile, "      \"threshold\": %u,\n", sdata->data.attrs[i].threshold);
@@ -223,11 +206,11 @@ int nvme_export_to_json(
         first_section_written = true;
     } else {
         if (first_section_written) fprintf(outfile, ",");
-         fprintf(outfile, "\n  \"healthAlerts\": []"); // Lista vazia se não for NVMe ou sem alertas
+         fprintf(outfile, "\n  \"healthAlerts\": []"); 
          first_section_written = true;
     }
 
-    // Seção 5: Resultados do Benchmark (se disponíveis)
+
     if (hybrid_ctx && hybrid_ctx->benchmark_mode && hybrid_ctx->num_benchmark_results_stored > 0) {
         if (first_section_written) fprintf(outfile, ",");
         fprintf(outfile, "\n  \"benchmarkResults\": [\n");
