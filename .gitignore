@@ -18,19 +18,23 @@ DartConfiguration.tcl
 Makefile
 install_manifest.txt
 
+# Node / JS
+node_modules/
+
 # Logs
 logs/
 *.log
+*.txt
+output.*
+log_*.txt
+*.manifest
 
-# Editor/IDE specific files
 .vscode/
 .spectory/
 
-# OS specific files
 .DS_Store
 Thumbs.db
 
-# Executables and other compiled objects
 *.exe
 *.dll
 *.so
@@ -39,6 +43,24 @@ Thumbs.db
 *.lib
 *.a
 
-# Generated reports
 reports/
 *.json 
+
+*.log
+*.txt
+output.*
+log_*.txt
+*.manifest
+
+*.bak
+*.copy
+README copy.md
+
+# Arquivos temporários específicos do seu projeto
+TESTE
+ascii-text-art.txt
+multiple_files
+
+tests/*
+!tests/*.c
+!tests/*.h 

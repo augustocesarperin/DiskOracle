@@ -8,7 +8,7 @@
 #define MAX_DRIVES 16
 #define MAX_ATTRIBUTES 30
 
-// Estrutura usada para listar drives em menus e tabelas
+
 typedef struct {
     char device_path[256];
     char model[256];
@@ -25,6 +25,7 @@ typedef struct {
     char firmware_rev[64];
     char type[32];
     char bus_type[32];
+    int64_t size_bytes;
     bool is_ssd;
     bool smart_capable;
 } BasicDriveInfo;

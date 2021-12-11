@@ -12,7 +12,7 @@ int log_event(const char *event) {
     errno_t err_localtime = localtime_s(&tm_s, &t);
     if (err_localtime != 0) {
         if (f) fclose(f);
-        return 1; // Failed to get local time
+        return 1; 
     }
 
     char ts[32];

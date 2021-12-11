@@ -1,21 +1,18 @@
 #include "nvme_hybrid.h"
-#include "pal.h"           // Para BasicDriveInfo e PAL_STATUS, etc.
-#include "smart.h"         // Para struct nvme_smart_log
+#include "pal.h"           
+#include "smart.h"        
 #include <stdio.h>
 #include <string.h>      // Para ZeroMemory (via windows.h) ou memset
-#include <strsafe.h>     // Adicionar este include
+#include <strsafe.h>     
 #include <windows.h>     // Para StringCchPrintfA, SYSTEMTIME (embora SYSTEMTIME esteja em nvme_hybrid.h)
 
-// Alerta 
-// Temperatura em Celsius
+
 #define TEMP_THRESHOLD_WARN_C 60
 #define TEMP_THRESHOLD_CRITICAL_C 70
 
-// Percentage Used
 #define PERCENTAGE_USED_THRESHOLD_WARN 80
 #define PERCENTAGE_USED_THRESHOLD_CRITICAL 90
 
-// Unsafe Shutdowns - Limiares absolutos para warning/critical
 #define UNSAFE_SHUTDOWNS_WARN 10
 #define UNSAFE_SHUTDOWNS_CRITICAL 50
 
@@ -23,7 +20,6 @@
 #define ERROR_LOG_ENTRIES_WARN 5
 #define ERROR_LOG_ENTRIES_CRITICAL 20
 
-// Helper para adicionar alerta
 static void add_alert(
     nvme_health_alerts_t* health_alerts, 
     nvme_alert_type_t type, 
@@ -43,24 +39,21 @@ static void add_alert(
     }
 }
 
-// Analisa os dados SMART NVMe e preenche a estrutura de alertas.
+
 void nvme_analyze_health_alerts(
     const struct smart_nvme* smart_log, 
     nvme_health_alerts_t* health_alerts_out,
-    BYTE device_spare_threshold // Vem do Identify Controller data (padrão 10% se não disponível)
+    BYTE device_spare_threshold 
 ) {
     if (!smart_log || !health_alerts_out) {
         return;
     }
 
     ZeroMemory(health_alerts_out, sizeof(nvme_health_alerts_t));
-    // health_alerts_out->alert_count = 0; // ZeroMemory já faz isso
-
 
     char current_val_str[MAX_NVME_ALERT_VALUE_STR];
     char threshold_str[MAX_NVME_ALERT_VALUE_STR];
 
-    // 1. Critical Warning Flags
     if (smart_log->critical_warning != 0) {
         StringCchPrintfA(current_val_str, sizeof(current_val_str), "0x%02X", smart_log->critical_warning);
         
@@ -76,8 +69,6 @@ void nvme_analyze_health_alerts(
         add_alert(health_alerts_out, NVME_ALERT_CRITICAL_WARNING_FLAGS, TRUE, desc, current_val_str, "!= 0x00");
     }
 
-    // 2. Temperature (em Kelvin, converter para Celsius para avaliação)
-    // smart_log->temperature é uint16_t. [0] é LSB, [1] é MSB. A struct já deve lidar com isso eu acho.
     uint16_t temp_kelvin = 0;
     memcpy(&temp_kelvin, smart_log->temperature, sizeof(uint16_t)); // Correctly copy 2 bytes
 
@@ -146,7 +137,6 @@ void nvme_analyze_health_alerts(
         add_alert(health_alerts_out, NVME_ALERT_MEDIA_ERRORS_HIGH, TRUE, "Media Errors Detected", current_val_str, threshold_str);
     }
 
-    // 7. Number of Error Log Entries (handle full 128-bit field)
     uint64_t num_err_log_entries_low = 0, num_err_log_entries_high = 0;
     memcpy(&num_err_log_entries_low, smart_log->num_err_log_entries, sizeof(uint64_t));
     memcpy(&num_err_log_entries_high, smart_log->num_err_log_entries + 8, sizeof(uint64_t)); // Next 8 bytes
@@ -166,6 +156,4 @@ void nvme_analyze_health_alerts(
         }
     }
 
-    // fprintf(stderr, "[DEBUG NVME_ALERTS] Health analysis complete. Alerts generated: %d\n", health_alerts_out->alert_count);
-    // fflush(stderr);
 }

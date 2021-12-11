@@ -1,20 +1,20 @@
 #include "../include/info.h"
 #include "../include/pal.h"
 #include "../include/smart.h"
-#include "../include/logging.h" // For DEBUG_PRINT, if used
-#include "../include/report.h" // Include our new report header
-#include <stdio.h>    // For printf
-#include <string.h>   // For memset, memcpy
-#include <inttypes.h> // For PRIu64
+#include "../include/logging.h" 
+#include "../include/report.h" 
+#include <stdio.h>    
+#include <string.h>   
+#include <inttypes.h> 
 #include "surface.h"
 #include "ui.h"
-#include <unistd.h> // For sleep
+#include <unistd.h> 
 #ifdef _WIN32
-#include <windows.h> // For Sleep
+#include <windows.h> 
 #endif
-#include <errno.h> // Para tradução de códigos de erro
+#include <errno.h> 
 
-// Variável global para o estado do scan, usada pelo callback.
+
 static scan_state_t g_final_scan_state;
 
 // Callback local para atualizar a UI durante o scan e salvar o estado final.
@@ -22,11 +22,9 @@ static void scan_progress_callback(const scan_state_t* state, void* user_data) {
     BasicDriveInfo* drive_info = (BasicDriveInfo*)user_data;
     // A função ui_draw_scan_progress já sabe como desenhar a barra de progresso.
     ui_draw_scan_progress(state, drive_info);
-    // Copia o estado atual para ser usado no relatório final
     memcpy(&g_final_scan_state, state, sizeof(scan_state_t));
 }
 
-// Convert SmartStatus enum to a string representation
 static const char* smart_status_to_string(SmartStatus status) {
     switch (status) {
         case SMART_HEALTH_OK: return "OK";
@@ -38,7 +36,6 @@ static const char* smart_status_to_string(SmartStatus status) {
     }
 }
 
-// Stub implementation for display_drive_info
 // This function will be expanded to show detailed information about the drive.
 void display_drive_info(const char *device_path) {
     if (device_path == NULL) {
@@ -70,13 +67,13 @@ void display_drive_info(const char *device_path) {
 
     if (ch == 's' || ch == 'S') {
         if (pal_create_directory("reports") != PAL_STATUS_SUCCESS) {
-             // A falha silenciosa é aceitável aqui, pois fopen_s irá falhar de qualquer maneira.
+
         }
 
         char filename[256] = {0};
         printf("\r                                                  \r"); 
         printf("Save as (e.g., report.txt): ");
-        if (pal_get_string_input(filename, sizeof(filename)) && filename[0] != '\\0') {
+        if (pal_get_string_input(filename, sizeof(filename)) && filename[0] != '\0') {
             char full_path[512] = {0};
             snprintf(full_path, sizeof(full_path), "reports/%s", filename);
 
@@ -92,11 +89,11 @@ void display_drive_info(const char *device_path) {
                 
                 char current_dir[1024];
                 if (pal_get_current_directory(current_dir, sizeof(current_dir)) == PAL_STATUS_SUCCESS) {
-                     printf("\nReport saved to: %s/reports/%s\n", current_dir, filename);
+                     printf("\nThe prophecy has been inscribed upon the scroll: %s/reports/%s\n", current_dir, filename);
                 } else {
-                    printf("\nReport saved to %s.", full_path);
+                    printf("\nThe prophecy has been inscribed upon the scroll: %s\n", full_path);
                 }
-                // Sem pausa aqui. Retorna direto ao menu.
+
             } else {
                 printf("\nError: Could not open file '%s' for writing.", full_path);
             }
@@ -104,14 +101,12 @@ void display_drive_info(const char *device_path) {
             printf("\nInvalid filename or operation cancelled.");
         }
         
-        // Adiciona uma pequena pausa para o usuário ler a mensagem antes de limpar a tela.
         #ifdef _WIN32
-            Sleep(2500); // 2.5 segundos no Windows
+            Sleep(2500); 
         #else
-            sleep(3);    // 3 segundos no Linux/macOS
+            sleep(3);  
         #endif
     }
-    // Se não for 'S' ou 's', a função simplesmente retorna, voltando ao menu.
 }
 
 /**
@@ -141,7 +136,7 @@ void run_surface_scan_command(const char *device_path) {
     #endif
 
     ui_init(); 
-    surface_scan(device_path, "quick", scan_progress_callback, &drive_info);
+    surface_scan(device_path, "quick", scan_progress_callback, &drive_info, &g_final_scan_state);
     ui_cleanup(); 
 
     ui_display_scan_report(&g_final_scan_state, &drive_info);

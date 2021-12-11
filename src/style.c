@@ -45,34 +45,27 @@
 static bool g_style_enabled = false;
 
 void style_init(void) {
-    fprintf(stderr, "[DEBUG_STYLE] style_init() called.\n");
     #ifdef _WIN32
     HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
     if (hOut == INVALID_HANDLE_VALUE) {
-        fprintf(stderr, "[DEBUG_STYLE] Failed to get standard output handle.\n");
         g_style_enabled = false;
         return;
     }
 
     DWORD dwMode = 0;
     if (!GetConsoleMode(hOut, &dwMode)) {
-        fprintf(stderr, "[DEBUG_STYLE] Failed to get console mode.\n");
         g_style_enabled = false;
         return;
     }
-    fprintf(stderr, "[DEBUG_STYLE] Initial console mode is: %lu\n", dwMode);
 
     dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
     if (!SetConsoleMode(hOut, dwMode)) {
-        fprintf(stderr, "[DEBUG_STYLE] Failed to set virtual terminal processing mode.\n");
         g_style_enabled = false;
         return;
     }
-    fprintf(stderr, "[DEBUG_STYLE] Successfully set virtual terminal processing mode.\n");
     #endif
 
     g_style_enabled = true;
-    fprintf(stderr, "[DEBUG_STYLE] Style system enabled: %s\n", g_style_enabled ? "true" : "false");
 }
 
 bool style_is_enabled(void) {

@@ -1,76 +1,53 @@
-#include <stdio.h>
-#include <string.h>
-#include <locale.h>
-#include "pal.h"
-#include "style.h"
-#include "ui.h"
-#include "interactive.h"
-#include "info.h"        
-#include <stdlib.h>
-#include <stdbool.h>
-#include "config.h"
-#include "smart.h"
-#include "surface.h"
-#include "logging.h"
-#include "report.h"
-#include "../include/nvme_hybrid.h"
-#include "nvme_export.h"
-#include "nvme_orchestrator.h"
+#include "common_headers.h"
 #include "commands.h"
-
-#ifdef _WIN32
-#include <windows.h>
-#define _CRT_SECURE_NO_WARNINGS
-#define _CRTDBG_MAP_ALLOC
-#include <crtdbg.h>
-#include <time.h> 
-#endif
+#include "pal.h"
 
 #define PROJECT_VERSION "1.0.0"
 
-// "Synthwave Grid"
-static const char* disk_oracle_art_sun[] = {
-    "                       __",
-    "                   _--\"  \"--_",
-    "                 -\"         \"-",
-    "                -\"             \"-",
-    NULL
-};
-
-static const char* disk_oracle_art_horizon[] = {
-    "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
-    "|           D I S K  :::  O R A C L E           |",
-    "=================================================",
+static const char* disk_oracle_logotype[] = {
+ "_____  _     _     ___                 _      ",
+ "|  _ \\(_)___| | __/ _ \\ _ __ __ _  ___| | ___ ",
+ "| | | | / __| |/ / | | | '__/ _` |/ __| |/ _ \\",
+ "| |_| | \\__ \\   <| |_| | | | (_| | (__| |  __/",
+ "|____/|_|___/_|\\_\\\\___/|_|  \\__,_|\\___|_|\\___|",
     NULL
 };
 
 static const char* disk_oracle_subtitle_text[] = {
-    "\"Telling you when your drive is dying, hopefully.\"",
-    "   Developed by Augusto Cesar Perin",
+    "All your files are temporarily permanent.",
+    "Developed by Augusto Cesar Perin",
     NULL
 };
 
 static scan_state_t g_final_scan_state;
 
 void print_welcome_screen(void) {
-    style_set_fg(COLOR_BRIGHT_MAGENTA);
-    for (int i = 0; disk_oracle_art_sun[i] != NULL; i++) {
-        printf("%s\n", disk_oracle_art_sun[i]);
-    }
-    style_reset();
+    const int term_width = 80;
+    const int logo_width = 48; 
+    int padding;
 
     style_set_fg(COLOR_MAGENTA);
-    for (int i = 0; disk_oracle_art_horizon[i] != NULL; i++) {
-        printf("%s\n", disk_oracle_art_horizon[i]);
+    padding = (term_width - logo_width) / 2;
+    for (int i = 0; disk_oracle_logotype[i] != NULL; i++) {
+        printf("%*s%s\n", padding, "", disk_oracle_logotype[i]);
     }
-    style_reset();
-
-    style_set_fg(COLOR_CYAN);
-    for (int i = 0; disk_oracle_subtitle_text[i] != NULL; i++) {
-        printf("    %s\n", disk_oracle_subtitle_text[i]);
-    }
-    style_reset();
+    
     printf("\n");
+
+    style_set_fg(COLOR_WHITE);
+    padding = (term_width - (int)strlen(disk_oracle_subtitle_text[0])) / 2;
+    printf("%*s%s\n", padding, "", disk_oracle_subtitle_text[0]);
+    
+    printf("\n\n"); 
+
+    style_set_fg(COLOR_DIM);
+    const char* author_text = disk_oracle_subtitle_text[1];
+    int logo_right_edge = ((term_width - logo_width) / 2) + logo_width;
+    padding = logo_right_edge - (int)strlen(author_text);
+    printf("%*s%s\n", padding, "", author_text);
+
+    style_reset();
+    printf("\n"); 
 }
 
 void print_brief_usage(void);
@@ -132,6 +109,18 @@ void print_full_help(void) {
     style_set_fg(COLOR_MAGENTA); 
     printf("> ");
     style_set_fg(COLOR_BRIGHT_CYAN);
+    printf("--error-log");
+    style_reset();
+    printf(" ");
+    style_set_fg(COLOR_DIM);
+    printf("<device_path>\n");
+    style_reset();
+    printf("    Commands the Oracle to decipher the disk's chronicle of past errors, revealing its deepest scars.\n\n");
+
+    printf("  ");
+    style_set_fg(COLOR_MAGENTA); 
+    printf("> ");
+    style_set_fg(COLOR_BRIGHT_CYAN);
     printf("--help\n");
     style_reset();
     printf("    Displays this sacred manuscript, guiding your journey into the machine's depths.\n\n");
@@ -150,10 +139,21 @@ void print_full_help(void) {
  */
 void print_brief_usage(void) {
     fprintf(stderr, "Usage: diskoracle <command>\n");
-    fprintf(stderr, "Commands: --list-drives, --surface, --smart, --smart-json, --help\n");
+    fprintf(stderr, "Commands: --list-drives, --surface, --smart, --smart-json, --error-log, --help\n");
     fprintf(stderr, "Try 'diskoracle --help' for more details.\n");
 }
 
+int handle_error_log_wrapper(int argc, char* argv[]) {
+    if (argc < 3) {
+        style_set_fg(COLOR_BRIGHT_YELLOW);
+        fprintf(stderr, "The Oracle requires a device path to read its chronicle of errors.\n");
+        style_reset();
+        fprintf(stderr, "Usage: diskoracle --error-log <device_path>\n");
+            return 1;
+        }
+    handle_error_log_command(argv[2]);
+    return 0;
+}
 
 void cleanup_platform(void);
 void display_drive_info(const char *device_path);
@@ -165,13 +165,11 @@ const command_t commands[] = {
     {"--surface",       handle_surface_scan},
     {"--smart",         handle_smart},
     {"--smart-json",    handle_smart_json},
+    {"--error-log",     handle_error_log_wrapper},
     {"--help",          handle_help},
-    {NULL, NULL} 
+    {NULL, NULL}  
 };
 
-
-
-// Entry Point
 int main(int argc, char* argv[]) {
 #ifdef _WIN32
     #if defined(_DEBUG)
@@ -180,12 +178,33 @@ int main(int argc, char* argv[]) {
     setlocale(LC_ALL, ".UTF8");
 #endif
 
-    clock_t start_time = clock();
-
     style_init();
 
+    if (!pal_is_running_as_admin()) {
+        const char* title = "Administrator Privileges Required";
+        const char* line1 = "DiskOracle needs elevated permissions to access low-level hardware information.";
+        const char* line2 = "Please restart this terminal as an Administrator.";
+        
+        int term_width = 80;
+        int padding;
+
+        style_set_fg(COLOR_BRIGHT_RED);
+        padding = (term_width - (int)strlen(title)) / 2;
+        printf("\n%*s%s\n\n", padding, "", title);
+
+        style_set_fg(COLOR_WHITE);
+        padding = (term_width - (int)strlen(line1)) / 2;
+        printf("%*s%s\n", padding, "", line1);
+        padding = (term_width - (int)strlen(line2)) / 2;
+        printf("%*s%s\n\n", padding, "", line2);
+
+        style_reset();
+        return 1;
+    }
+
+    clock_t start_time = clock();
+
     if (argc > 1) {
-        // Modo de linha de comando
         const char* command_name = argv[1];
 
         for (int i = 0; commands[i].name != NULL; i++) {

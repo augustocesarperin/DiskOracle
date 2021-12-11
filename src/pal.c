@@ -27,10 +27,6 @@ const char* pal_get_error_string(pal_status_t status) {
             return "The vessel is too small to contain the requested knowledge (Buffer too small).";
         case PAL_STATUS_NO_DRIVES_FOUND:
             return "The machine is empty. The Oracle finds no disk-spirits to consult.";
-        case PAL_STATUS_SMART_NOT_SUPPORTED:
-            return "This disk-spirit is mute; it does not speak the tongue of S.M.A.R.T.";
-        case PAL_STATUS_WRONG_DRIVE_TYPE:
-            return "You are using the wrong incantation for this type of spirit (e.g. NVMe vs ATA).";
         case PAL_STATUS_ERROR_DATA_UNDERFLOW:
             return "The disk-spirit promised more knowledge than it delivered (Data Underflow).";
         case PAL_STATUS_DEVICE_ERROR:

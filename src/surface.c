@@ -21,8 +21,7 @@ typedef SSIZE_T ssize_t;
 #define BUFFER_SIZE 4096
 #define BUFFER_ALIGNMENT 4096
 
-// Função interna para o scan rápido, agora com callback
-static int surface_scan_quick(const char *device, SurfaceScanResult *result, scan_callback_t callback, void* user_data) {
+static int surface_scan_quick(const char *device, SurfaceScanResult *result, scan_callback_t callback, void* user_data, scan_state_t* out_final_state) {
 #ifdef _WIN32
     LARGE_INTEGER freq, start_time, end_time;
     QueryPerformanceFrequency(&freq);
@@ -162,6 +161,16 @@ static int surface_scan_quick(const char *device, SurfaceScanResult *result, sca
     // A mensagem de status final é preparada, mas não impressa aqui
     snprintf(result->status_message, sizeof(result->status_message), "Quick scan completed.");
 
+    if (callback) {
+        state.current_speed_mbps = 0; // Final update with final numbers
+        callback(&state, user_data);
+    }
+    
+    // Copia o estado final para o ponteiro de saída, se fornecido
+    if (out_final_state) {
+        memcpy(out_final_state, &state, sizeof(scan_state_t));
+    }
+
 #ifdef _WIN32
     if (buf) _aligned_free(buf);
     CloseHandle(hFile);
@@ -179,7 +188,7 @@ static int surface_scan_quick(const char *device, SurfaceScanResult *result, sca
     return 0;
 }
 
-// Função interna para o scan profundo
+
 static int surface_scan_deep(const char *device, SurfaceScanResult *result) {
 #ifdef _WIN32
     LARGE_INTEGER freq, start_time, end_time;
@@ -295,10 +304,9 @@ static int surface_scan_deep(const char *device, SurfaceScanResult *result) {
 
 
 // Função principal exportada, que chama as funções internas
-int surface_scan(const char *device_path, const char *scan_type, scan_callback_t callback, void* user_data) {
-    SurfaceScanResult result;
-    memset(&result, 0, sizeof(result));
-    
+int surface_scan(const char *device_path, const char *scan_type, scan_callback_t callback, void* user_data, scan_state_t* out_final_state) {
+    SurfaceScanResult result = {0};
+
     if (device_path == NULL) {
         fprintf(stderr, "Error: Device path is NULL.\n");
         return 1;
@@ -307,7 +315,7 @@ int surface_scan(const char *device_path, const char *scan_type, scan_callback_t
     const char *type_to_run = (scan_type == NULL || strlen(scan_type) == 0) ? "quick" : scan_type;
 
     if (strcmp(type_to_run, "quick") == 0) {
-        return surface_scan_quick(device_path, &result, callback, user_data);
+        return surface_scan_quick(device_path, &result, callback, user_data, out_final_state);
     } else if (strcmp(type_to_run, "deep") == 0) {
         return surface_scan_deep(device_path, &result);
     } else {

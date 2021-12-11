@@ -33,16 +33,16 @@ struct smart_attr {
     uint8_t threshold;
 };
 
-// Common SMART Attribute Flags (can be OR'd into smart_attr.flags)
-#define SMART_ATTR_FLAG_PREFAIL             0x0001 // Indicates a pre-failure attribute
-#define SMART_ATTR_FLAG_ONLINE_COLLECTION   0x0002 // Attribute is updated during normal operation
-#define SMART_ATTR_FLAG_PERFORMANCE         0x0004 // Attribute relates to performance
-#define SMART_ATTR_FLAG_ERROR_RATE          0x0008 // Attribute relates to error rates
-#define SMART_ATTR_FLAG_EVENT_COUNT         0x0010 // Attribute is an event counter
+// Common SMART Attribute Flags 
+#define SMART_ATTR_FLAG_PREFAIL             0x0001 
+#define SMART_ATTR_FLAG_ONLINE_COLLECTION   0x0002 
+#define SMART_ATTR_FLAG_PERFORMANCE         0x0004 
+#define SMART_ATTR_FLAG_ERROR_RATE          0x0008 
+#define SMART_ATTR_FLAG_EVENT_COUNT         0x0010 
 #define SMART_ATTR_FLAG_SELF_PRESERVING     0x0020 // Attribute is self-preserving (value should not decrease)
 
-struct smart_nvme { // Renamed from smart_nvme_t
-    NVME_HEALTH_INFO_LOG raw_health_log; // Changed to use SDK type
+struct smart_nvme { 
+    NVME_HEALTH_INFO_LOG raw_health_log; 
     uint8_t critical_warning;
     uint8_t temperature[2]; // Kelvin
     uint8_t avail_spare;
@@ -63,20 +63,20 @@ struct smart_nvme { // Renamed from smart_nvme_t
 
 struct nvme_smart_log {
     uint8_t critical_warning;
-    uint16_t temperature; // In Kelvin. Subtract 273.15 for Celsius. Field is 2 bytes, value is integer part.
+    uint16_t temperature; 
     uint8_t avail_spare;
     uint8_t spare_thresh;
     uint8_t percent_used;
-    uint8_t data_units_read[16];        // Number of 512-byte data units read by the host, LSB first
-    uint8_t data_units_written[16];     // Number of 512-byte data units written by the host, LSB first
+    uint8_t data_units_read[16];       
+    uint8_t data_units_written[16];     
     uint8_t host_read_commands[16];     // Number of read commands completed by the controller, LSB first
     uint8_t host_write_commands[16];    // Number of write commands completed by the controller, LSB first
-    uint8_t controller_busy_time[16];   // Controller busy time in minutes, LSB first
-    uint8_t power_cycles[16];           // Number of power cycles, LSB first
-    uint8_t power_on_hours[16];         // Number of power-on hours, LSB first
-    uint8_t unsafe_shutdowns[16];       // Number of unsafe shutdowns, LSB first
-    uint8_t media_errors[16];           // Number of media and data integrity errors, LSB first
-    uint8_t num_err_log_entries[16];    // Number of error information log entries, LSB first
+    uint8_t controller_busy_time[16];   
+    uint8_t power_cycles[16];           
+    uint8_t power_on_hours[16];         
+    uint8_t unsafe_shutdowns[16];       
+    uint8_t media_errors[16];          
+    uint8_t num_err_log_entries[16];    
     uint32_t warning_composite_temp_time;    
     uint32_t critical_composite_temp_time;   
     uint16_t temp_sensor_1_trans_count;      
@@ -100,7 +100,6 @@ struct smart_data {
 };
 
 // Function prototypes
-
 
 int smart_read(const char *device_path, const char *model, const char *serial, struct smart_data *out);
 

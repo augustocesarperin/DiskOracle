@@ -165,7 +165,6 @@ typedef struct {
     int alert_count;
 } nvme_health_alerts_t;
 
-// Forward declarations
 struct BasicDriveInfo;
 
 void nvme_analyze_health_alerts(

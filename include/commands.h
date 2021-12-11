@@ -3,7 +3,6 @@
 
 #include <stdbool.h>
 
-// Definições de tipo para o sistema de comandos, agora visíveis para todos.
 typedef int (*command_handler_t)(int argc, char* argv[]);
 
 typedef struct {
@@ -46,9 +45,12 @@ int handle_list_drives(int argc, char* argv[]);
 int handle_surface_scan(int argc, char* argv[]);
 int handle_smart(int argc, char* argv[]);
 int handle_smart_json(int argc, char* argv[]);
+int handle_error_log(int argc, char* argv[]);
 int handle_help(int argc, char* argv[]);
+int start_interactive_mode(void);
 
-// Tabela de despacho de comandos
+void handle_error_log_command(const char* device_path);
+
 extern const command_t commands[];
 
 #endif // COMMANDS_H 

@@ -1,28 +1,21 @@
-// Includes de Bibliotecas Padrão
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>   // Para time()
-
-// Includes do Projeto
-#include "interactive.h"
+#include <time.h>   
+#include "../include/interactive.h"
 #include "pal.h"
 #include "ui.h"
 #include "info.h"
 #include "style.h"
-#include "surface.h" // Adicionado para ter acesso ao scan_state_t e surface_scan
+#include "surface.h" 
 
-// Futuramente, este arquivo conterá toda a lógica para os menus,
-// seleção de drives e execução de ações no modo interativo.
 
-// Gerenciador de estado para o modo interativo
 typedef enum {
     STATE_EXIT,
     STATE_DRIVE_SELECTION,
     STATE_ACTION_SELECTION
 } interactive_state_t;
 
-// Protótipos de funções internas
 static interactive_state_t display_drive_selection_menu(DriveInfo* selected_drive);
 static interactive_state_t display_action_menu(const DriveInfo* drive);
 static void run_surface_scan_interactive(const DriveInfo* drive);
@@ -45,12 +38,13 @@ int start_interactive_mode(void) {
                 current_state = display_action_menu(&selected_drive);
                 break;
             case STATE_EXIT:
-                // O loop vai terminar
                 break;
         }
     }
 
-    printf("Exiting DiskOracle. See you next time!\n");
+    style_set_fg(COLOR_MAGENTA);
+    printf("The Oracle falls silent.\n");
+    style_reset();
     return 0;
 }
 
@@ -65,18 +59,17 @@ static interactive_state_t display_drive_selection_menu(DriveInfo* selected_driv
 
     DriveInfo drives[MAX_DRIVES];
     int drive_count = 0;
-    pal_list_drives(drives, MAX_DRIVES, &drive_count);
+    pal_status_t status = pal_list_drives(drives, MAX_DRIVES, &drive_count);
 
-    if (drive_count == 0) {
+    if (status != PAL_STATUS_SUCCESS || drive_count == 0) {
         style_set_fg(COLOR_BRIGHT_RED);
-        printf("No drives found or an error occurred.\n");
+        printf("Oracle's Whisper: %s\n", pal_get_error_string(status != PAL_STATUS_SUCCESS ? status : PAL_STATUS_NO_DRIVES_FOUND));
         style_reset();
         pal_wait_for_keypress();
         return STATE_EXIT;
     }
 
-    // Exibe o menu de seleção
-    style_set_fg(COLOR_BRIGHT_YELLOW);
+    style_set_fg(COLOR_BRIGHT_CYAN);
     printf("=== SELECT A DRIVE ===\n");
     style_reset();
 
@@ -112,8 +105,9 @@ static interactive_state_t display_drive_selection_menu(DriveInfo* selected_driv
         return STATE_ACTION_SELECTION;
     }
 
-    // Escolha inválida, retorna para o mesmo menu
-    printf("\nInvalid option. Please try again.");
+    style_set_fg(COLOR_YELLOW);
+    printf("\nThe Oracle does not understand your input. Contemplate your choice and try again.");
+    style_reset();
     pal_wait_for_keypress();
     return STATE_DRIVE_SELECTION;
 }
@@ -124,8 +118,6 @@ static interactive_state_t display_drive_selection_menu(DriveInfo* selected_driv
  */
 static void interactive_scan_callback(const scan_state_t* state, void* user_data) {
     BasicDriveInfo* drive_info = (BasicDriveInfo*)user_data;
-    // A função ui_draw_scan_progress já sabe como desenhar a barra de progresso.
-    // Nós apenas a alimentamos com os dados atualizados.
     ui_draw_scan_progress(state, drive_info);
 }
 
@@ -147,15 +139,21 @@ static void run_surface_scan_interactive(const DriveInfo* drive) {
     // 2. Prepara o terminal para a UI (limpa a tela, esconde o cursor).
     ui_init();
 
-    // 3. Inicia o scan, passando nossa função de callback para receber as atualizações.
-    surface_scan(drive->device_path, "quick", interactive_scan_callback, &basic_info);
+    // 3. Inicia o scan, passando nossa função de callback e uma variável para o resultado.
+    scan_state_t final_scan_state;
+    memset(&final_scan_state, 0, sizeof(scan_state_t));
+    surface_scan(drive->device_path, "quick", interactive_scan_callback, &basic_info, &final_scan_state);
 
     // 4. Restaura o terminal ao seu estado normal.
     ui_cleanup();
 
-    // 5. Exibe o relatório final. (Assumindo que `surface_scan` não retorna o estado final)
-    // Uma melhoria futura seria `surface_scan` preencher um `scan_state_t` final.
-    printf("\n\nScan concluded.\n");
+    // 5. Exibe o relatório final.
+    ui_display_scan_report(&final_scan_state, &basic_info);
+
+    printf("\n\n");
+    style_set_fg(COLOR_MAGENTA);
+    printf("The divination is complete. Press any key to return to the actions menu.");
+    style_reset();
     pal_wait_for_keypress();
 }
 
@@ -168,7 +166,7 @@ static interactive_state_t display_action_menu(const DriveInfo* drive) {
     pal_clear_screen();
     print_welcome_screen();
 
-    style_set_fg(COLOR_BRIGHT_YELLOW);
+    style_set_fg(COLOR_BRIGHT_CYAN);
     printf("=== ACTIONS FOR: %s ===\n", drive->model);
     style_reset();
 
@@ -213,7 +211,9 @@ static interactive_state_t display_action_menu(const DriveInfo* drive) {
             pal_wait_for_keypress();
             return STATE_ACTION_SELECTION;
         default:
-            printf("\nInvalid option. Please try again.");
+            style_set_fg(COLOR_YELLOW);
+            printf("\nThe Oracle does not understand your input. Contemplate your choice and try again.");
+            style_reset();
             pal_wait_for_keypress();
             return STATE_ACTION_SELECTION;
     }
