@@ -135,7 +135,7 @@ int smart_interpret(const char *device_path, struct smart_data *data) {
     } else if (data->is_nvme) {
         printf("Drive Type: NVMe\n\n");
         printf("NVMe SMART Log:\n");
-        printf("-------------------------------------------------------------------------------\n");
+        printf("+-----------------------------------------------------------------------------+\n");
         const struct smart_nvme *nvme = &data->data.nvme;
 
         char firmware_str[9];
@@ -179,7 +179,7 @@ int smart_interpret(const char *device_path, struct smart_data *data) {
         printf("\n  ~~~ Error Information ~~~\n");
         printf("  %-35s : %" PRIu64 "\n", "Media and Data Integrity Errors", nvme_counter_to_uint64(nvme->media_errors));
         printf("  %-35s : %" PRIu64 "\n", "Error Information Log Entries", nvme_counter_to_uint64(nvme->num_err_log_entries));
-        printf("-------------------------------------------------------------------------------\n");
+        printf("+-----------------------------------------------------------------------------+\n");
 
     } else { // SEÇÃO ATA/SATA (Lógica original movida para cá)
         printf("Drive Type: ATA/SATA\n\n");
@@ -190,8 +190,15 @@ int smart_interpret(const char *device_path, struct smart_data *data) {
             printf("  No SMART attributes to display for this ATA/SATA drive.\n");
     } else {
             printf("Classic SMART Attributes:\n");
-            printf("  ID# ATTRIBUTE_NAME          FLAGS    VALUE WORST THRESH RAW_VALUE           STATUS\n");
-            printf("  -------------------------------------------------------------------------------\n");
+#ifdef _WIN32
+            printf("  +-----+--------------------------+--------+------+------+-------+---------------------+----------+\n");
+            printf("  | ID# | ATTRIBUTE_NAME           | FLAGS  | VALUE| WORST| THRESH| RAW_VALUE           | STATUS   |\n");
+            printf("  +-----+--------------------------+--------+------+------+-------+---------------------+----------+\n");
+#else
+            printf("  ┌─────┬──────────────────────────┬────────┬──────┬──────┬───────┬─────────────────────┬──────────┐\n");
+            printf("  │ ID# │ ATTRIBUTE_NAME           │ FLAGS  │ VALUE│ WORST│ THRESH│ RAW_VALUE           │ STATUS   │\n");
+            printf("  ├─────┼──────────────────────────┼────────┼──────┼──────┼───────┼─────────────────────┼──────────┤\n");
+#endif
 
             // ***** INÍCIO DA LÓGICA ORIGINAL DE PROCESSAMENTO E IMPRESSÃO ATA PRESERVADA *****
             // (Corresponde aproximadamente às linhas 242-339 do arquivo original src/smart.c ANTES de qualquer modificação minha)
@@ -246,7 +253,7 @@ int smart_interpret(const char *device_path, struct smart_data *data) {
                 char attr_name_str[30];
                 get_ata_attribute_name(attr->id, attr_name_str, sizeof(attr_name_str));
 
-                uint64_t raw_val = raw_to_uint64(attr->raw);
+            uint64_t raw_val = raw_to_uint64(attr->raw);
                 char status_str[15] = "OK"; 
                 
                 // Lógica para determinar o status
@@ -256,7 +263,11 @@ int smart_interpret(const char *device_path, struct smart_data *data) {
                     }
                 }
 
-                printf("  %-4u %-24s 0x%04X   %-5u %-5u %-6u %-19" PRIu64 " ",
+#ifdef _WIN32
+                printf("  | %-3u | %-24s | 0x%04X | %-4u | %-4u | %-5u | %-19" PRIu64 " |",
+#else
+                printf("  │ %-3u │ %-24s │ 0x%04X │ %-4u │ %-4u │ %-5u │ %-19" PRIu64 " │",
+#endif
                     attr->id, attr_name_str, attr->flags, attr->value, attr->worst,
                     attr->threshold, raw_val);
                 
@@ -266,12 +277,20 @@ int smart_interpret(const char *device_path, struct smart_data *data) {
                 } else {
                     style_set_fg(COLOR_BRIGHT_GREEN);
                 }
-                printf("%-10s", status_str);
+#ifdef _WIN32
+                printf(" %-8s |", status_str);
+#else
+                printf(" %-8s │", status_str);
+#endif
                 style_reset(); // Resetar cor para o padrão
                 printf("\n");
             }
             // ***** FIM DA LÓGICA ORIGINAL DE PROCESSAMENTO E IMPRESSÃO ATA PRESERVADA *****
-            printf("  -------------------------------------------------------------------------------\n");
+#ifdef _WIN32
+            printf("  +-----+--------------------------+--------+------+------+-------+---------------------+----------+\n");
+#else
+            printf("  └─────┴──────────────────────────┴────────┴──────┴──────┴───────┴─────────────────────┴──────────┘\n");
+#endif
         }
     } // Fim do else para ATA/SATA
 

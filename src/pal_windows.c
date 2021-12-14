@@ -154,7 +154,7 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
         if (attr_id == 0) {
             continue;
         }
-        
+
         // Extract attribute values
         BYTE flags_lo = smart_read_buf.DataBuf[offset + 1];
         BYTE flags_hi = smart_read_buf.DataBuf[offset + 2];

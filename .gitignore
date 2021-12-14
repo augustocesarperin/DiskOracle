@@ -1,38 +1,96 @@
-# Build artifacts
-build/
+# =================================================================
+# Arquivos de Build e Compilação (Gerados Automaticamente)
+# =================================================================
+
+# Pasta de build principal (case-insensitive)
+[Bb]uild/
+[Bb]uild*/
+
+# Arquivos gerados pelo CMake
 CMakeFiles/
-*.vcxproj
-*.vcxproj.filters
-*.sln
+cmake_install.cmake
+CMakeCache.txt
+Testing/
+
+# Binários, bibliotecas e objetos compilados
+*.exe
+*.dll
+*.so
+*.a
+*.lib
+*.o
+*.obj
+
+# =================================================================
+# Pastas de Ferramentas e IDEs
+# =================================================================
+
+# Visual Studio Code, JetBrains, Visual Studio
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+
+# =================================================================
+# Logs, Relatórios e Arquivos do SO
+# =================================================================
+
+# Relatórios e logs gerados pelo programa
+reports/
+*.log
+
+# Arquivos de sistema (macOS, Windows)
+.DS_Store
+Thumbs.db
+
+# =================================================================
+# Código-fonte que NÃO deve ser monitorado
+# =================================================================
+
+# Pasta com o código-fonte dos testes
+tests/
+
+# Logs
+*.txt
+*.json
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+.vscode/
+.idea/
+.vs/
 *.suo
 *.user
 *.ncb
 *.sdf
 *.opensdf
+.specstory/
+
+# Ignore build dir
+[Bb]uild/
+[Bb]uild*/
+
+# CMake generated files
+CMakeFiles/
 cmake_install.cmake
 CMakeCache.txt
 Testing/
-DartConfiguration.tcl
 
-# Logs
-logs/
-*.log
+# Project's own test source code
+tests/
 
-# Editor/IDE specific files
-.vscode/
+# Visual Studio project files
+*.vcxproj
+*.vcxproj.filters
+*.sln
 
-# OS specific files
-.DS_Store
-Thumbs.db
-
-# Executables and other compiled objects
 *.exe
 *.dll
 *.so
 *.o
 *.obj
 *.lib
-*.a
-
-# Generated reports
-reports/ 
+*.a 

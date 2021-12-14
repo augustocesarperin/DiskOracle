@@ -151,18 +151,41 @@ void report_display_nvme_alerts(const nvme_health_alerts_t *alerts_data) {
         return;
     }
 
-    printf("\n  Detalhes dos Alertas NVMe:\n");
-    printf("  --------------------------\n");
+#ifdef _WIN32
+    printf("\n  +---------------------------------------------------+\n");
+    printf("  | Detalhes dos Alertas NVMe                         |\n");
+    printf("  +---------------------------------------------------+\n");
+#else
+    printf("\n  ┌───────────────────────────────────────────────────┐\n");
+    printf("  │ Detalhes dos Alertas NVMe                         │\n");
+    printf("  ├───────────────────────────────────────────────────┤\n");
+#endif
     for (int i = 0; i < alerts_data->alert_count; ++i) {
         const nvme_alert_info_t* alert = &alerts_data->alerts[i];
-        printf("  [%s] %s\n", 
-               alert->is_critical ? "CRITICO" : "AVISO  ", 
+#ifdef _WIN32
+        printf("  | [%s] %-37s |\n",
+               alert->is_critical ? "CRITICO" : "AVISO  ",
                alert->description);
-        printf("    Valor Atual : %s\n", alert->current_value_str);
-        printf("    Limiar      : %s\n", alert->threshold_str);
+        printf("  |    Valor Atual : %-30s |\n", alert->current_value_str);
+        printf("  |    Limiar      : %-30s |\n", alert->threshold_str);
         if (i < alerts_data->alert_count - 1) {
-            printf("    ---\n");
+            printf("  +---------------------------------------------------+\n");
         }
+#else
+        printf("  │ [%s] %-37s │\n",
+               alert->is_critical ? "CRITICO" : "AVISO  ",
+               alert->description);
+        printf("  │    Valor Atual : %-30s │\n", alert->current_value_str);
+        printf("  │    Limiar      : %-30s │\n", alert->threshold_str);
+        if (i < alerts_data->alert_count - 1) {
+            printf("  ├───────────────────────────────────────────────────┤\n");
+        }
+#endif
     }
+#ifdef _WIN32
+    printf("  +---------------------------------------------------+\n");
+#else
+    printf("  └───────────────────────────────────────────────────┘\n");
+#endif
     fflush(stdout);
 }
