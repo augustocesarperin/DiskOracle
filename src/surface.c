@@ -8,6 +8,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <malloc.h> // Para _aligned_malloc e _aligned_free
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
 #else
 #include <fcntl.h>
 #include <unistd.h>
