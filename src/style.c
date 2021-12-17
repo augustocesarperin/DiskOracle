@@ -5,9 +5,9 @@
 #include <windows.h>
 #endif
 
-// Sequências de escape ANSI para formatação
 #define ANSI_RESET          "\x1b[0m"
 #define ANSI_BOLD           "\x1b[1m"
+#define ANSI_DIM            "\x1b[2m"
 #define ANSI_FG_BLACK       "\x1b[30m"
 #define ANSI_FG_RED         "\x1b[31m"
 #define ANSI_FG_GREEN       "\x1b[32m"
@@ -90,7 +90,8 @@ void style_set_fg(term_color_t color) {
         [COLOR_BRIGHT_BLACK] = ANSI_FG_BRIGHT_BLACK, [COLOR_BRIGHT_RED] = ANSI_FG_BRIGHT_RED,
         [COLOR_BRIGHT_GREEN] = ANSI_FG_BRIGHT_GREEN, [COLOR_BRIGHT_YELLOW] = ANSI_FG_BRIGHT_YELLOW,
         [COLOR_BRIGHT_BLUE] = ANSI_FG_BRIGHT_BLUE, [COLOR_BRIGHT_MAGENTA] = ANSI_FG_BRIGHT_MAGENTA,
-        [COLOR_BRIGHT_CYAN] = ANSI_FG_BRIGHT_CYAN, [COLOR_BRIGHT_WHITE] = ANSI_FG_BRIGHT_WHITE
+        [COLOR_BRIGHT_CYAN] = ANSI_FG_BRIGHT_CYAN, [COLOR_BRIGHT_WHITE] = ANSI_FG_BRIGHT_WHITE,
+        [COLOR_DIM] = ANSI_DIM
     };
     printf("%s", fg_codes[color]);
 }

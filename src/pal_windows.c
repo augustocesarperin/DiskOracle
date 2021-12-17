@@ -6,7 +6,6 @@
 #include "logging.h"
 #include "smart.h"
 #include "info.h"
-#include "project_config.h"
 #include <stdio.h>
 #include <string.h> 
 #include <ctype.h>  
@@ -17,7 +16,8 @@
 #include <winioctl.h>
 #include <setupapi.h>
 #include <devioctl.h>
-#include <ntddscsi.h> // Required for ATA pass-through, IOCTL_ATA_PASS_THROUGH, ATA_PASS_THROUGH_EX
+#include <conio.h>
+#include <ntddscsi.h> 
 #include <nvme.h>     // For NVME_COMMAND and related definitions, and STORAGE_PROTOCOL_SPECIFIC_DATA related enums
 #include <devguid.h>  // For GUID_DEVINTERFACE_DISK (declaration or definition based on initguid.h)
 #include <cfgmgr32.h> // Added for CM_Get_Device_ID_ExA, MAX_DEVICE_ID_LEN, CR_SUCCESS
@@ -32,23 +32,25 @@ const GUID GUID_DEVINTERFACE_DISK =
 }
 #endif
 
-// Define PAL_DEV for Windows implementation
+// Define if not present in SDK
+#ifndef STORAGE_PROTOCOL_COMMAND_FLAG_DATA_IN
+#define STORAGE_PROTOCOL_COMMAND_FLAG_DATA_IN (1 << 0)
+#endif
+
 #define PAL_DEV HANDLE
 
-// Definições para os comandos SMART ATA
-#define ATA_CMD_SMART           0xB0    // Comando SMART
-#define SMART_CMD_READ_DATA     0xD0    // Subcomando READ DATA
-#define SMART_CMD_READ_THRESH   0xD1    // Subcomando READ THRESHOLDS
-#define SMART_CMD_RETURN_STATUS 0xDA    // Subcomando RETURN STATUS
+#define ATA_CMD_SMART           0xB0
+#define SMART_CMD_READ_DATA     0xD0
+#define SMART_CMD_READ_THRESH   0xD1
+#define SMART_CMD_RETURN_STATUS 0xDA
 
-// Estrutura para buffer ATA pass-through
 typedef struct _ATA_PASS_THROUGH_EX_WITH_BUFFER {
     ATA_PASS_THROUGH_EX apt;
     ULONG Filler; 
     UCHAR DataBuf[512];
 } ATA_PASS_THROUGH_EX_WITH_BUFFER;
 
-// Implementação da função para ler SMART de drives ATA/SATA
+//  SMART  ATA/SATA
 static int smart_read_ata(PAL_DEV device, struct smart_data* out)
 {
     if (!device || !out) {
@@ -56,17 +58,14 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
         return PAL_STATUS_INVALID_PARAMETER;
     }
 
-    // First check if SMART is enabled
     ATA_PASS_THROUGH_EX_WITH_BUFFER smart_status_buf = {0};
     
-    // Set up the ATA PASS THROUGH structure for SMART RETURN STATUS
     smart_status_buf.apt.Length = sizeof(ATA_PASS_THROUGH_EX);
     smart_status_buf.apt.AtaFlags = ATA_FLAGS_DRDY_REQUIRED;
     smart_status_buf.apt.DataTransferLength = 0;
     smart_status_buf.apt.TimeOutValue = 5; // 5 seconds timeout
     smart_status_buf.apt.DataBufferOffset = 0;
     
-    // Command registers
     smart_status_buf.apt.CurrentTaskFile[0] = 0xDA; // Features register: SMART RETURN STATUS
     smart_status_buf.apt.CurrentTaskFile[1] = 0; // Sector Count
     smart_status_buf.apt.CurrentTaskFile[2] = 0; // LBA Low
@@ -88,30 +87,17 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
     );
     
     if (!result) {
-        // Keep this error message as it's a genuine failure
-        fprintf(stderr, "[ERROR] SMART RETURN STATUS command failed, error: %lu\n", GetLastError());
         return PAL_STATUS_IO_ERROR;
     }
     
-    // Check the return status from SMART
-    if (smart_status_buf.apt.CurrentTaskFile[3] == 0xF4 && 
-        smart_status_buf.apt.CurrentTaskFile[4] == 0xC2) {
-    } else if (smart_status_buf.apt.CurrentTaskFile[3] != 0x4F || 
-               smart_status_buf.apt.CurrentTaskFile[4] != 0xC2) {
-    } else {
-    }
-
-    // Now, proceed with reading SMART data
     ATA_PASS_THROUGH_EX_WITH_BUFFER smart_read_buf = {0};
     
-    // Set up the ATA PASS THROUGH structure for SMART READ DATA
     smart_read_buf.apt.Length = sizeof(ATA_PASS_THROUGH_EX);
     smart_read_buf.apt.AtaFlags = ATA_FLAGS_DRDY_REQUIRED | ATA_FLAGS_DATA_IN;
     smart_read_buf.apt.DataTransferLength = sizeof(smart_read_buf.DataBuf);
-    smart_read_buf.apt.TimeOutValue = 5; // 5 seconds timeout
+    smart_read_buf.apt.TimeOutValue = 5;
     smart_read_buf.apt.DataBufferOffset = FIELD_OFFSET(ATA_PASS_THROUGH_EX_WITH_BUFFER, DataBuf);
     
-    // Command registers
     smart_read_buf.apt.CurrentTaskFile[0] = 0xD0; // Features register: SMART READ DATA
     smart_read_buf.apt.CurrentTaskFile[1] = 1; // Sector Count: 1 sector
     smart_read_buf.apt.CurrentTaskFile[2] = 0; // LBA Low
@@ -133,83 +119,71 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
     );
     
     if (!result) {
-        // Keep this error message as it's a genuine failure
         fprintf(stderr, "[ERROR] SMART READ DATA command failed, error: %lu\n", GetLastError());
         return PAL_STATUS_IO_ERROR;
     }
     
-    // Verify data structure - Relaxed check
-    if (smart_read_buf.DataBuf[0] == 0x0A && smart_read_buf.DataBuf[1] == 0x00) {
-    } else if (smart_read_buf.DataBuf[0] != 0x00 || smart_read_buf.DataBuf[1] != 0x00) {
-    }
-    
-    // SMART data is valid, parse it and fill the output structure
     int attr_count = 0;
     
     for (int i = 0; i < MAX_SMART_ATTRIBUTES; i++) {  // ATA has up to 30 attributes
         int offset = 2 + (i * 12);
         BYTE attr_id = smart_read_buf.DataBuf[offset];
         
-        // Skip unused attributes (ID 0)
         if (attr_id == 0) {
             continue;
         }
 
-        // Extract attribute values
         BYTE flags_lo = smart_read_buf.DataBuf[offset + 1];
         BYTE flags_hi = smart_read_buf.DataBuf[offset + 2];
         BYTE value = smart_read_buf.DataBuf[offset + 3];
         BYTE worst = smart_read_buf.DataBuf[offset + 4];
         BYTE threshold = smart_read_buf.DataBuf[offset + 5];
         
-        // Extract raw value (6 bytes, usually only the first 4 are used)
         UINT64 raw_value = 0;
         for (int j = 0; j < 6; j++) {
             raw_value |= ((UINT64)smart_read_buf.DataBuf[offset + 6 + j]) << (j * 8);
         }
         
-        // Store in output structure
         if (attr_count < MAX_SMART_ATTRIBUTES) {
             out->data.attrs[attr_count].id = attr_id;
             out->data.attrs[attr_count].value = value;
             out->data.attrs[attr_count].worst = worst;
             out->data.attrs[attr_count].threshold = threshold;
             
-            // Copy raw value bytes
             for (int j = 0; j < 6; j++) {
                 out->data.attrs[attr_count].raw[j] = smart_read_buf.DataBuf[offset + 6 + j];
             }
             
-            // Flags (combine flags_lo and flags_hi)
             out->data.attrs[attr_count].flags = (flags_hi << 8) | flags_lo;
             
-            // Set attribute name based on ID
             switch(attr_id) {
-                case 1: strcpy(out->data.attrs[attr_count].name, "Raw_Read_Error_Rate"); break;
-                case 2: strcpy(out->data.attrs[attr_count].name, "Throughput_Performance"); break;
-                case 3: strcpy(out->data.attrs[attr_count].name, "Spin_Up_Time"); break;
-                case 4: strcpy(out->data.attrs[attr_count].name, "Start_Stop_Count"); break;
-                case 5: strcpy(out->data.attrs[attr_count].name, "Reallocated_Sector_Ct"); break;
-                case 7: strcpy(out->data.attrs[attr_count].name, "Seek_Error_Rate"); break;
-                case 8: strcpy(out->data.attrs[attr_count].name, "Seek_Time_Performance"); break;
-                case 9: strcpy(out->data.attrs[attr_count].name, "Power_On_Hours"); break;
-                case 10: strcpy(out->data.attrs[attr_count].name, "Spin_Retry_Count"); break;
-                case 11: strcpy(out->data.attrs[attr_count].name, "Calibration_Retry_Count"); break;
-                case 12: strcpy(out->data.attrs[attr_count].name, "Power_Cycle_Count"); break;
-                case 13: strcpy(out->data.attrs[attr_count].name, "Read_Soft_Error_Rate"); break;
-                case 183: strcpy(out->data.attrs[attr_count].name, "Runtime_Bad_Block"); break;
-                case 184: strcpy(out->data.attrs[attr_count].name, "End-to-End_Error"); break;
-                case 187: strcpy(out->data.attrs[attr_count].name, "Reported_Uncorrect"); break;
-                case 188: strcpy(out->data.attrs[attr_count].name, "Command_Timeout"); break;
-                case 190: strcpy(out->data.attrs[attr_count].name, "Airflow_Temperature_Cel"); break;
-                case 194: strcpy(out->data.attrs[attr_count].name, "Temperature_Celsius"); break;
-                case 196: strcpy(out->data.attrs[attr_count].name, "Reallocated_Event_Count"); break;
-                case 197: strcpy(out->data.attrs[attr_count].name, "Current_Pending_Sector"); break;
-                case 198: strcpy(out->data.attrs[attr_count].name, "Offline_Uncorrectable"); break;
-                case 199: strcpy(out->data.attrs[attr_count].name, "UDMA_CRC_Error_Count"); break;
-                case 200: strcpy(out->data.attrs[attr_count].name, "Multi_Zone_Error_Rate"); break;
+                case 1: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Raw_Read_Error_Rate"); break;
+                case 2: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Throughput_Performance"); break;
+                case 3: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Spin_Up_Time"); break;
+                case 4: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Start_Stop_Count"); break;
+                case 5: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Reallocated_Sector_Ct"); break;
+                case 7: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Seek_Error_Rate"); break;
+                case 8: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Seek_Time_Performance"); break;
+                case 9: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Power_On_Hours"); break;
+                case 10: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Spin_Retry_Count"); break;
+                case 11: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Calibration_Retry_Count"); break;
+                case 12: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Power_Cycle_Count"); break;
+                case 13: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Read_Soft_Error_Rate"); break;
+                case 183: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Runtime_Bad_Block"); break;
+                case 184: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "End-to-End_Error"); break;
+                case 187: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Reported_Uncorrect"); break;
+                case 188: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Command_Timeout"); break;
+                case 190: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Airflow_Temperature_Cel"); break;
+                case 194: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Temperature_Celsius"); break;
+                case 196: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Reallocated_Event_Count"); break;
+                case 197: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Current_Pending_Sector"); break;
+                case 198: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Offline_Uncorrectable"); break;
+                case 199: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "UDMA_CRC_Error_Count"); break;
+                case 200: strcpy_s(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Multi_Zone_Error_Rate"); break;
                 default: 
-                    snprintf(out->data.attrs[attr_count].name, sizeof(out->data.attrs[attr_count].name), "Unknown_Attribute_%d", attr_id);
+                    StringCchPrintfA(out->data.attrs[attr_count].name, 
+                                     sizeof(out->data.attrs[attr_count].name), 
+                                     "Unknown_Attribute_%d", attr_id);
                     break;
             }
             
@@ -219,24 +193,8 @@ static int smart_read_ata(PAL_DEV device, struct smart_data* out)
     
     out->attr_count = attr_count;
     
-    return PAL_STATUS_SUCCESS;
-}
-
-// Define the standard size for NVMe SMART/Health Information Log Page (LID 02h)
-#define NVME_LOG_PAGE_SIZE_BYTES 512
-
-#ifndef NVME_LOG_PAGE_HEALTH_INFO
-    #define NVME_LOG_PAGE_HEALTH_INFO 0x02 // Log Page Identifier for SMART/Health Information
-#endif
-
-#ifndef NVME_ADMIN_COMMAND_GET_LOG_PAGE
-    #define NVME_ADMIN_COMMAND_GET_LOG_PAGE 0x02
-#endif
-
-#ifndef NVME_NAMESPACE_ALL
-    #define NVME_NAMESPACE_ALL 0xFFFFFFFF
-#endif
-
+            return PAL_STATUS_SUCCESS; 
+        }
 
 static pal_status_t pal_windows_get_nvme_smart_log_via_query_prop_direct(
     const char* device_path, 
@@ -264,7 +222,6 @@ static pal_status_t pal_get_smart_data_nvme_hybrid(
 );
 static void trim_trailing_spaces(char *str);
 static bool get_device_path_from_instance_id(const char* instance_id, char* device_path_buffer, size_t buffer_size);
-static void pal_windows_parse_nvme_health_log(const NVME_HEALTH_INFO_LOG* sdk_health_log, struct smart_nvme* target_smart_nvme);
 static void pal_windows_parse_nvme_health_log(const NVME_HEALTH_INFO_LOG* sdk_health_log, struct smart_nvme* target_smart_nvme) {
     if (!sdk_health_log || !target_smart_nvme) {
         return;
@@ -352,9 +309,9 @@ pal_status_t pal_get_smart_data(const char *device_path, struct smart_data *out)
         if (nvme_status == PAL_STATUS_SUCCESS && nvme_bytes_returned >= sizeof(NVME_HEALTH_INFO_LOG) && temp_overall_hybrid_result.success) {
             memcpy(&out->data.nvme.raw_health_log, nvme_log_buffer, sizeof(NVME_HEALTH_INFO_LOG)); 
             pal_windows_parse_nvme_health_log(&out->data.nvme.raw_health_log, &out->data.nvme);
-            out->attr_count = 1; // Indicar que os dados estão presentes e válidos para NVMe
+            out->attr_count = 1; 
         } else {
-            out->attr_count = 0; // Indicar que não há dados válidos para NVMe
+            out->attr_count = 0; 
         }
         return nvme_status; 
 
@@ -371,8 +328,13 @@ pal_status_t pal_get_smart_data(const char *device_path, struct smart_data *out)
         );
         
         if (hDevice == INVALID_HANDLE_VALUE) {
-            if (GetLastError() == ERROR_ACCESS_DENIED) return PAL_STATUS_ACCESS_DENIED;
-            return PAL_STATUS_DEVICE_ERROR;
+            if (GetLastError() == ERROR_FILE_NOT_FOUND) {
+                return PAL_STATUS_DEVICE_NOT_FOUND;
+            }
+            if (GetLastError() == ERROR_ACCESS_DENIED) {
+                return PAL_STATUS_ACCESS_DENIED;
+            }
+            return PAL_STATUS_ERROR;
         }
         
         int ata_result = smart_read_ata(hDevice, out); // 'out' is struct smart_data*
@@ -393,7 +355,7 @@ int64_t pal_get_device_size(const char *device_path) {
     }
 
     HANDLE hDevice = CreateFileA(device_path,
-                               GENERIC_READ, // Use GENERIC_READ for IOCTL_DISK_GET_LENGTH_INFO
+                               GENERIC_READ,
                                FILE_SHARE_READ | FILE_SHARE_WRITE,
                                NULL,
                                OPEN_EXISTING,
@@ -432,24 +394,20 @@ pal_status_t pal_get_basic_drive_info(const char *device_path, BasicDriveInfo *i
     }
 
     memset(info, 0, sizeof(BasicDriveInfo));
-    strncpy(info->model, "Unknown", sizeof(info->model) - 1);
-    info->model[sizeof(info->model)-1] = '\0'; 
-    strncpy(info->serial, "Unknown", sizeof(info->serial) - 1);
-    info->serial[sizeof(info->serial)-1] = '\0'; 
-    strncpy(info->type, "Unknown", sizeof(info->type) - 1);
-    info->type[sizeof(info->type)-1] = '\0'; 
-    strncpy(info->bus_type, "Unknown", sizeof(info->bus_type) - 1);
-    info->bus_type[sizeof(info->bus_type)-1] = '\0';
 
-    HANDLE hDevice = CreateFileA(device_path,
-                               GENERIC_READ, // Changed from 0 to GENERIC_READ
-                               FILE_SHARE_READ | FILE_SHARE_WRITE,
-                               NULL,
-                               OPEN_EXISTING,
-                               0, // dwFlagsAndAttributes, 0 is fine for this purpose
-                               NULL);
+    strcpy_s(info->path, sizeof(info->path), device_path);
+
+    HANDLE hDevice = CreateFileA(device_path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                 NULL, OPEN_EXISTING, 0, NULL);
+
     if (hDevice == INVALID_HANDLE_VALUE) {
-        return PAL_STATUS_DEVICE_OPEN_FAILED;
+        if (GetLastError() == ERROR_FILE_NOT_FOUND) {
+            return PAL_STATUS_DEVICE_NOT_FOUND;
+        }
+        if (GetLastError() == ERROR_ACCESS_DENIED) {
+            return PAL_STATUS_ACCESS_DENIED;
+        }
+        return PAL_STATUS_ERROR;
     }
 
     STORAGE_PROPERTY_QUERY query_desc_prop;
@@ -473,31 +431,36 @@ pal_status_t pal_get_basic_drive_info(const char *device_path, BasicDriveInfo *i
     if (success_desc && bytes_returned_desc_ioctl > 0) {
         STORAGE_DEVICE_DESCRIPTOR *sdd_desc = (STORAGE_DEVICE_DESCRIPTOR *)buffer_desc;
         if (sdd_desc->ProductIdOffset > 0 && sdd_desc->ProductIdOffset < sizeof(buffer_desc)) {
-            strncpy(info->model, (char*)buffer_desc + sdd_desc->ProductIdOffset, sizeof(info->model) - 1);
-            info->model[sizeof(info->model)-1] = '\0';
-            trim_trailing_spaces(info->model);
+            char* model_name_ptr = (char*)buffer_desc + sdd_desc->ProductIdOffset;
+            trim_trailing_spaces(model_name_ptr);
+            strncpy_s(info->model, sizeof(info->model), model_name_ptr, _TRUNCATE);
         }
         if (sdd_desc->SerialNumberOffset > 0 && sdd_desc->SerialNumberOffset < sizeof(buffer_desc)) {
-            strncpy(info->serial, (char*)buffer_desc + sdd_desc->SerialNumberOffset, sizeof(info->serial) - 1);
-            info->serial[sizeof(info->serial)-1] = '\0';
-            trim_trailing_spaces(info->serial);
+            char* serial_ptr = (char*)buffer_desc + sdd_desc->SerialNumberOffset;
+            trim_trailing_spaces(serial_ptr);
+            strncpy_s(info->serial, sizeof(info->serial), serial_ptr, _TRUNCATE);
+        }
+        if (sdd_desc->ProductRevisionOffset > 0 && sdd_desc->ProductRevisionOffset < sizeof(buffer_desc)) {
+            char* firmware_ptr = (char*)buffer_desc + sdd_desc->ProductRevisionOffset;
+            trim_trailing_spaces(firmware_ptr);
+            strncpy_s(info->firmware_rev, sizeof(info->firmware_rev), firmware_ptr, _TRUNCATE);
         }
         switch (sdd_desc->BusType) {
-            case BusTypeSata: strncpy(info->bus_type, "SATA", sizeof(info->bus_type) - 1); break;
-            case BusTypeScsi: strncpy(info->bus_type, "SCSI", sizeof(info->bus_type) - 1); break;
-            case BusTypeAtapi: strncpy(info->bus_type, "ATAPI", sizeof(info->bus_type) - 1); break;
-            case BusTypeAta: strncpy(info->bus_type, "ATA", sizeof(info->bus_type) - 1); break;
-            case BusTypeUsb: strncpy(info->bus_type, "USB", sizeof(info->bus_type) - 1); break;
-            case BusType1394: strncpy(info->bus_type, "1394", sizeof(info->bus_type) - 1); break;
-            case BusTypeSsa: strncpy(info->bus_type, "SSA", sizeof(info->bus_type) - 1); break;
-            case BusTypeFibre: strncpy(info->bus_type, "Fibre Channel", sizeof(info->bus_type) - 1); break;
-            case BusTypeRAID: strncpy(info->bus_type, "RAID", sizeof(info->bus_type) - 1); break;
-            case BusTypeNvme: strncpy(info->bus_type, "NVMe", sizeof(info->bus_type) - 1); break;
-            case BusTypeSd: strncpy(info->bus_type, "SD", sizeof(info->bus_type) - 1); break;
-            case BusTypeMmc: strncpy(info->bus_type, "MMC", sizeof(info->bus_type) - 1); break;
-            case BusTypeVirtual: strncpy(info->bus_type, "Virtual", sizeof(info->bus_type) - 1); break;
-            case BusTypeFileBackedVirtual: strncpy(info->bus_type, "File Backed Virtual", sizeof(info->bus_type) - 1); break;
-            default: strncpy(info->bus_type, "Other", sizeof(info->bus_type) - 1); break;
+            case BusTypeSata: strncpy_s(info->bus_type, sizeof(info->bus_type), "SATA", _TRUNCATE); break;
+            case BusTypeScsi: strncpy_s(info->bus_type, sizeof(info->bus_type), "SCSI", _TRUNCATE); break;
+            case BusTypeAtapi: strncpy_s(info->bus_type, sizeof(info->bus_type), "ATAPI", _TRUNCATE); break;
+            case BusTypeAta: strncpy_s(info->bus_type, sizeof(info->bus_type), "ATA", _TRUNCATE); break;
+            case BusTypeUsb: strncpy_s(info->bus_type, sizeof(info->bus_type), "USB", _TRUNCATE); break;
+            case BusType1394: strncpy_s(info->bus_type, sizeof(info->bus_type), "1394", _TRUNCATE); break;
+            case BusTypeSsa: strncpy_s(info->bus_type, sizeof(info->bus_type), "SSA", _TRUNCATE); break;
+            case BusTypeFibre: strncpy_s(info->bus_type, sizeof(info->bus_type), "Fibre Channel", _TRUNCATE); break;
+            case BusTypeRAID: strncpy_s(info->bus_type, sizeof(info->bus_type), "RAID", _TRUNCATE); break;
+            case BusTypeNvme: strncpy_s(info->bus_type, sizeof(info->bus_type), "NVMe", _TRUNCATE); break;
+            case BusTypeSd: strncpy_s(info->bus_type, sizeof(info->bus_type), "SD", _TRUNCATE); break;
+            case BusTypeMmc: strncpy_s(info->bus_type, sizeof(info->bus_type), "MMC", _TRUNCATE); break;
+            case BusTypeVirtual: strncpy_s(info->bus_type, sizeof(info->bus_type), "Virtual", _TRUNCATE); break;
+            case BusTypeFileBackedVirtual: strncpy_s(info->bus_type, sizeof(info->bus_type), "File Backed Virtual", _TRUNCATE); break;
+            default: strncpy_s(info->bus_type, sizeof(info->bus_type), "Other", _TRUNCATE); break;
         }
         info->bus_type[sizeof(info->bus_type)-1] = '\0';
 
@@ -517,66 +480,122 @@ pal_status_t pal_get_basic_drive_info(const char *device_path, BasicDriveInfo *i
                               &bytes_returned_penalty, 
                               NULL) && bytes_returned_penalty >= sizeof(DEVICE_SEEK_PENALTY_DESCRIPTOR)) {
             if (penalty_desc.IncursSeekPenalty) {
-                strncpy(info->type, "HDD", sizeof(info->type) - 1);
+                strncpy_s(info->type, sizeof(info->type), "HDD", _TRUNCATE);
             } else {
-                 if (sdd_desc->BusType == BusTypeNvme) {
-                     strncpy(info->type, "NVMe", sizeof(info->type) - 1);
+                strncpy_s(info->type, sizeof(info->type), sdd_desc->BusType == BusTypeNvme ? "NVMe" : "SSD", _TRUNCATE);
+        }
                 } else {
-                     strncpy(info->type, "SSD", sizeof(info->type) - 1);
-                }
-            }
-        } else {
-             if (sdd_desc->BusType == BusTypeNvme) {
-                 strncpy(info->type, "NVMe", sizeof(info->type) - 1);
-            } else {
-                 strncpy(info->type, "Unknown (SeekTypeFail)", sizeof(info->type) -1);
-            }
+            strncpy_s(info->type, sizeof(info->type), sdd_desc->BusType == BusTypeNvme ? "NVMe" : "Unknown (SeekTypeFail)", _TRUNCATE);
         }
         info->type[sizeof(info->type)-1] = '\0';
         info->smart_capable = true; 
     } else {
         CloseHandle(hDevice); 
-        return PAL_STATUS_IO_ERROR; // Ou um código de erro mais específico se aplicável
+        return PAL_STATUS_IO_ERROR; 
     }
+
+    // Obter o tamanho do disco e preencher o novo campo
+    info->size_bytes = pal_get_device_size(device_path);
+
     CloseHandle(hDevice);
     return PAL_STATUS_SUCCESS;
 }
 
 pal_status_t pal_create_directory(const char *path) {
-    if (!path || *path == '\0') {
-        return PAL_STATUS_INVALID_PARAMETER;
-    }
-    BOOL create_dir_result = CreateDirectoryA(path, NULL);
-    if (create_dir_result) {
-        return PAL_STATUS_SUCCESS;
-        } else {
-        DWORD err = GetLastError();
-        if (err == ERROR_ALREADY_EXISTS) {
+    if (!CreateDirectoryA(path, NULL)) {
+        DWORD error = GetLastError();
+        if (error == ERROR_ALREADY_EXISTS) {
             return PAL_STATUS_SUCCESS; 
-        }
-        if (err == ERROR_PATH_NOT_FOUND) {
-            return PAL_STATUS_INVALID_PARAMETER; 
-        }
-        if (err == ERROR_ACCESS_DENIED) { 
-            return PAL_STATUS_ACCESS_DENIED; 
         }
         return PAL_STATUS_ERROR; 
     }
+    return PAL_STATUS_SUCCESS;
+}
+
+pal_status_t pal_get_current_directory(char* buffer, size_t size) {
+    DWORD result = GetCurrentDirectoryA((DWORD)size, buffer);
+    if (result == 0 || result > size) {
+        return PAL_STATUS_ERROR;
+    }
+    return PAL_STATUS_SUCCESS;
 }
 
 pal_status_t pal_initialize(void) {
     return PAL_STATUS_SUCCESS;
 }
 
-PAL_API void pal_cleanup(void) {
+void pal_cleanup(void) {
 }
-PAL_API int pal_do_surface_scan(void *handle, unsigned long long start_lba, unsigned long long lba_count, pal_scan_callback callback, void *user_data) {
-    (void)handle; (void)start_lba; (void)lba_count; (void)callback; (void)user_data;
-    return PAL_STATUS_UNSUPPORTED;
+
+int pal_do_surface_scan(void* handle, unsigned long long start_lba, unsigned long long lba_count, pal_scan_callback callback, void* user_data) {
+    if (!handle || handle == INVALID_HANDLE_VALUE || !callback) {
+        return PAL_STATUS_INVALID_PARAMETER;
+    }
+
+    // Para o cálculo de velocidade e ETA
+    const time_t start_time = time(NULL);
+    time_t last_update_time = start_time;
+    unsigned long long blocks_since_last_update = 0;
+
+    // Constantes de escaneamento
+    const DWORD sector_size = 512; // Tamanho de setor lógico mais comum
+    const DWORD chunk_size_kb = 256; // Ler em blocos de 256 KB
+    const DWORD read_buffer_size = chunk_size_kb * 1024;
+    const unsigned long long sectors_per_read = read_buffer_size / sector_size;
+
+    // Alocar buffer de leitura
+    BYTE* buffer = (BYTE*)malloc(read_buffer_size);
+    if (!buffer) {
+        return PAL_STATUS_NO_MEMORY;
+    }
+
+    scan_state_t* state = (scan_state_t*)user_data;
+    if (!state) {
+        free(buffer);
+        return PAL_STATUS_INVALID_PARAMETER;
+    }
+    
+    // Loop principal de escaneamento
+    for (unsigned long long current_lba = start_lba; current_lba < start_lba + lba_count; current_lba += sectors_per_read) {
+        LARGE_INTEGER position;
+        position.QuadPart = current_lba * sector_size;
+
+        if (!SetFilePointerEx(handle, position, NULL, FILE_BEGIN)) {
+            state->bad_blocks += sectors_per_read;
+            continue; 
+        }
+
+        DWORD bytes_read = 0;
+        if (!ReadFile(handle, buffer, read_buffer_size, &bytes_read, NULL) || bytes_read != read_buffer_size) {
+            state->bad_blocks += sectors_per_read; 
+        }
+
+        state->scanned_blocks += sectors_per_read;
+        blocks_since_last_update += sectors_per_read;
+
+        time_t current_time = time(NULL);
+        if (difftime(current_time, last_update_time) >= 1.0) {
+            double elapsed_since_last = difftime(current_time, last_update_time);
+            if (elapsed_since_last > 0) {
+                 double bytes_since_last = (double)blocks_since_last_update * sector_size;
+                 state->current_speed_mbps = (bytes_since_last / (1024 * 1024)) / elapsed_since_last;
+            }
+            callback(state, user_data);
+            last_update_time = current_time;
+            blocks_since_last_update = 0;
+        }
+    }
+
+    free(buffer);
+
+    state->scanned_blocks = state->total_blocks;
+    callback(state, user_data);
+
+
+    return PAL_STATUS_SUCCESS;
 }
 
 // Define necessary flags and structures if not perfectly available from SDK headers for MinGW
-// These are standard values from winioctl.h / ntddstor.h
 #ifndef IOCTL_STORAGE_QUERY_PROPERTY
 #define IOCTL_STORAGE_QUERY_PROPERTY CTL_CODE(IOCTL_STORAGE_BASE, 0x0500, METHOD_BUFFERED, FILE_ANY_ACCESS)
 #endif
@@ -711,7 +730,7 @@ static pal_status_t pal_windows_get_nvme_smart_log_via_query_prop_direct(
         method_result->success = TRUE; 
         method_result->error_code = 0; 
 
-    } else { 
+        } else {
         if (method_result->error_code == ERROR_INVALID_PARAMETER) final_pal_status = PAL_STATUS_INVALID_PARAMETER; 
         else if (method_result->error_code == ERROR_NOT_SUPPORTED) final_pal_status = PAL_STATUS_UNSUPPORTED;
         else if (method_result->error_code == ERROR_ACCESS_DENIED) final_pal_status = PAL_STATUS_ACCESS_DENIED;
@@ -760,7 +779,7 @@ static pal_status_t pal_windows_get_nvme_smart_log_via_protocol_cmd_direct(
         method_result->method_used = NVME_ACCESS_METHOD_PROTOCOL_COMMAND;
         method_result->success = FALSE;
         method_result->error_code = 0;
-        } else {
+            } else {
         fprintf(stderr, "[PAL_CRITICAL_ERROR PAL_NVME_SMART_IOCTL_PROTO] method_result is NULL.\n"); fflush(stderr);
         return PAL_STATUS_INVALID_PARAMETER;
     }
@@ -772,7 +791,7 @@ static pal_status_t pal_windows_get_nvme_smart_log_via_protocol_cmd_direct(
         goto complete_and_cleanup_proto;
     }
     if (context->verbose_logging) {
-    } else {
+                } else {
     }
     if (user_buffer_size < NVME_LOG_PAGE_SIZE_BYTES) {
         final_pal_status = PAL_STATUS_BUFFER_TOO_SMALL;
@@ -796,20 +815,17 @@ static pal_status_t pal_windows_get_nvme_smart_log_via_protocol_cmd_direct(
     spt_command->Version = command_fam_offset; 
     spt_command->Length = command_fam_offset;  
     spt_command->ProtocolType = ProtocolTypeNvme;
-    spt_command->Flags = 0x00000002UL; // Start with DATA_IN, can be made configurable via context later
+    spt_command->Flags = STORAGE_PROTOCOL_COMMAND_FLAG_DATA_IN;
     spt_command->ReturnStatus = STORAGE_PROTOCOL_STATUS_PENDING; 
     spt_command->CommandLength = sizeof(NVME_COMMAND); 
     spt_command->DataFromDeviceTransferLength = NVME_LOG_PAGE_SIZE_BYTES;
     spt_command->DataFromDeviceBufferOffset = command_fam_offset + sizeof(NVME_COMMAND);
-    spt_command->TimeOutValue = 10; 
-    spt_command->ErrorInfoOffset = 0; spt_command->ErrorInfoLength = 0;
-    spt_command->DataToDeviceBufferOffset = 0; spt_command->DataToDeviceTransferLength = 0;
+    spt_command->TimeOutValue = 10;
 
     nvme_command->CDW0.OPC = NVME_ADMIN_COMMAND_GET_LOG_PAGE; 
     nvme_command->NSID = NVME_NAMESPACE_ALL;                 
     ULONG cdw10_value = (NVME_LOG_PAGE_HEALTH_INFO & 0xFF) | ((((NVME_LOG_PAGE_SIZE_BYTES / sizeof(DWORD)) - 1) & 0xFFF) << 16);
     ((PULONG)nvme_command)[10] = cdw10_value;
-
 
     hDevice = CreateFileA(device_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hDevice == INVALID_HANDLE_VALUE) {
@@ -831,7 +847,7 @@ static pal_status_t pal_windows_get_nvme_smart_log_via_protocol_cmd_direct(
                 *bytes_returned = NVME_LOG_PAGE_SIZE_BYTES; 
                 final_pal_status = PAL_STATUS_SUCCESS; 
                 method_result->success = TRUE;
-                    } else {
+    } else {
                 final_pal_status = PAL_STATUS_ERROR_DATA_UNDERFLOW; 
                     }
                 } else {
@@ -856,7 +872,6 @@ complete_and_cleanup_proto:
     return final_pal_status;
 }
 
-// Modificar pal_get_smart_data_nvme_hybrid para ativar o benchmark
 pal_status_t pal_get_smart_data_nvme_hybrid(
     const char* device_path, 
     nvme_hybrid_context_t* context,
@@ -936,16 +951,14 @@ end_method_loop:
     
     return final_pal_status_for_function;
 }
-// Implementação de trim_trailing_spaces
 static void trim_trailing_spaces(char *str) {
     if (str == NULL) return;
-    int i = strlen(str) - 1;
+    size_t i = strlen(str) - 1;
     while (i >= 0 && isspace((unsigned char)str[i])) {
         str[i] = '\0';
         i--;
     }
 }
-// New SetupAPI helper function to get a usable device path from a PNPDeviceID (Device Instance ID)
 static bool get_device_path_from_instance_id(const char* instance_id, char* device_path_buffer, size_t buffer_size) {
     if (!instance_id || !device_path_buffer || buffer_size == 0) {
         return false;
@@ -1013,7 +1026,7 @@ static bool get_device_path_from_instance_id(const char* instance_id, char* devi
     SetupDiDestroyDeviceInfoList(hDevInfo);
     return true;
 }
-pal_status_t pal_list_drives(pal_drive_info_t *drive_list, int max_drives, int *drive_count) {
+pal_status_t pal_list_drives(DriveInfo *drive_list, int max_drives, int *drive_count) {
     if (!drive_list || !drive_count || max_drives <= 0) {
         return PAL_STATUS_INVALID_PARAMETER;
     }
@@ -1021,26 +1034,25 @@ pal_status_t pal_list_drives(pal_drive_info_t *drive_list, int max_drives, int *
     *drive_count = 0;
     char device_path_buffer[MAX_PATH];
     BasicDriveInfo basic_info;
-    int64_t device_size;
     HANDLE hDevice;
 
     for (int i = 0; i < 16; ++i) { // Check for up to 16 physical drives
         if (*drive_count >= max_drives) {
             break;
         }
-        sprintf(device_path_buffer, "\\\\.\\PhysicalDrive%d", i);
+        sprintf_s(device_path_buffer, sizeof(device_path_buffer), "\\\\.\\PhysicalDrive%d", i);
                               hDevice = CreateFileA(device_path_buffer,
-                              0, // No access needed, just checking existence
-                              FILE_SHARE_READ | FILE_SHARE_WRITE, // Share mode
-                              NULL,             // Default security attributes
-                              OPEN_EXISTING,    // Opens a file or device, only if it exists
-                              0,                // Flags and attributes
-                              NULL);            // No template file
+                              0, 
+                              FILE_SHARE_READ | FILE_SHARE_WRITE, 
+                              NULL,             
+                              OPEN_EXISTING,    
+                              0,                
+                              NULL);            
 
-        if (hDevice == INVALID_HANDLE_VALUE) {
+    if (hDevice == INVALID_HANDLE_VALUE) {
             continue;
         }
-        CloseHandle(hDevice); // Close the handle, we just needed to confirm it exists
+        CloseHandle(hDevice); 
         pal_status_t basic_info_status = pal_get_basic_drive_info(device_path_buffer, &basic_info);
         if (basic_info_status == PAL_STATUS_SUCCESS) {
             drive_list[*drive_count].size_bytes = pal_get_device_size(device_path_buffer);
@@ -1049,17 +1061,244 @@ pal_status_t pal_list_drives(pal_drive_info_t *drive_list, int max_drives, int *
                 continue;
             }
             
-            strncpy(drive_list[*drive_count].device_path, device_path_buffer, sizeof(drive_list[*drive_count].device_path) - 1);
+            strncpy_s(drive_list[*drive_count].device_path, sizeof(drive_list[*drive_count].device_path), device_path_buffer, sizeof(drive_list[*drive_count].device_path) - 1);
             drive_list[*drive_count].device_path[sizeof(drive_list[*drive_count].device_path) - 1] = '\0';
-            strncpy(drive_list[*drive_count].model, basic_info.model, sizeof(drive_list[*drive_count].model) - 1);
+            strncpy_s(drive_list[*drive_count].model, sizeof(drive_list[*drive_count].model), basic_info.model, _TRUNCATE);
             drive_list[*drive_count].model[sizeof(drive_list[*drive_count].model) - 1] = '\0';
-            strncpy(drive_list[*drive_count].serial, basic_info.serial, sizeof(drive_list[*drive_count].serial) - 1);
+            strncpy_s(drive_list[*drive_count].serial, sizeof(drive_list[*drive_count].serial), basic_info.serial, _TRUNCATE);
             drive_list[*drive_count].serial[sizeof(drive_list[*drive_count].serial) - 1] = '\0';        
-            strncpy(drive_list[*drive_count].type, basic_info.type, sizeof(drive_list[*drive_count].type) -1 );
-            drive_list[*drive_count].type[sizeof(drive_list[*drive_count].type) -1] = '\0';
+            strncpy_s(drive_list[*drive_count].type, sizeof(drive_list[*drive_count].type), basic_info.type, _TRUNCATE);
+            drive_list[*drive_count].type[sizeof(drive_list[*drive_count].type) - 1] = '\0';
             (*drive_count)++;
         }
     }
     return PAL_STATUS_SUCCESS;
 }
+
+pal_status_t pal_get_terminal_size(int* width, int* height) {
+    if (width == NULL || height == NULL) {
+        return PAL_STATUS_INVALID_PARAMETER;
+    }
+    CONSOLE_SCREEN_BUFFER_INFO csbi;
+    if (GetConsoleScreenBufferInfo(GetStdHandle(STD_OUTPUT_HANDLE), &csbi)) {
+        *width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+        *height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+        return PAL_STATUS_SUCCESS;
+    }
+    return PAL_STATUS_ERROR;
+}
+
+// =================================================================================
+// TUI Utility Functions Implementation
+// =================================================================================
+
+void pal_clear_screen(void) {
+    system("cls");
+}
+
+#include <conio.h>
+void pal_wait_for_keypress(void) {
+    printf("\nPress Enter to continue...\n");
+    while (_getch() != '\r');
+}
+
+int pal_get_char_input(void) {
+    return _getch();
+}
+
+bool pal_get_string_input(char* buffer, size_t buffer_size) {
+    if (!buffer || buffer_size == 0) {
+    return false;
+}
+
+    if (fgets(buffer, (int)buffer_size, stdin) != NULL) {
+        size_t len = strlen(buffer);
+        if (len > 0 && buffer[len-1] == '\n') {
+            buffer[len-1] = '\0';
+        }
+        return true;
+    }
+    return false;
+}
+
+/**
+ * @brief Generic helper function to send an NVMe Admin Command via IOCTL_STORAGE_PROTOCOL_COMMAND.
+ *
+ * This function handles the complex buffer allocation and structure setup required
+ * for NVMe passthrough commands on Windows. It correctly calculates the total
+ * buffer size to accommodate the command header, the NVMe command itself (SQE),
+ * and the expected data payload, thus preventing "Invalid Parameter" errors.
+ *
+ * @param hDev Handle to the target device.
+ * @param sqe Pointer to the NVMe command structure to be sent.
+ * @param data Pointer to the buffer that will receive the data from the device.
+ * @param len The size of the data buffer (`data`) and the expected payload length.
+ * @return pal_status_t PAL_STATUS_SUCCESS on success, or an error code on failure.
+ */
+static pal_status_t nvme_admin_passthru(HANDLE hDev, NVME_COMMAND *sqe, void *data, ULONG len) {
+    const ULONG headerSizeForFields = FIELD_OFFSET(STORAGE_PROTOCOL_COMMAND, Command);
+    const ULONG cmdSize = sizeof(NVME_COMMAND);
+    const ULONG dataOffset = sizeof(STORAGE_PROTOCOL_COMMAND) + cmdSize;
+    const ULONG totalSize = dataOffset + len;
+
+    PSTORAGE_PROTOCOL_COMMAND protocol_cmd = (PSTORAGE_PROTOCOL_COMMAND)calloc(1, totalSize);
+    if (!protocol_cmd) {
+        return PAL_STATUS_NO_MEMORY;
+    }
+
+    protocol_cmd->Version = headerSizeForFields;
+    protocol_cmd->Length = headerSizeForFields;
+    protocol_cmd->ProtocolType = 3; // ProtocolTypeNvme
+    protocol_cmd->Flags = STORAGE_PROTOCOL_COMMAND_FLAG_DATA_IN;
+    protocol_cmd->CommandSpecific = 0x01;
+    protocol_cmd->CommandLength = cmdSize;
+    protocol_cmd->DataFromDeviceBufferOffset = dataOffset;
+    protocol_cmd->DataFromDeviceTransferLength = len;
+    protocol_cmd->TimeOutValue = 10;
+
+    memcpy(protocol_cmd->Command, sqe, cmdSize);
+
+    DWORD bytesReturned = 0;
+    BOOL result = DeviceIoControl(hDev,
+                                  IOCTL_STORAGE_PROTOCOL_COMMAND,
+                                  protocol_cmd, totalSize,
+                                  protocol_cmd, totalSize,
+                                  &bytesReturned, NULL);
+
+    pal_status_t status = PAL_STATUS_IO_ERROR; // Assume failure
+    if (result && protocol_cmd->ReturnStatus == STORAGE_PROTOCOL_STATUS_SUCCESS) {
+        if (bytesReturned >= totalSize) {
+            memcpy(data, (BYTE*)protocol_cmd + dataOffset, len);
+            status = PAL_STATUS_SUCCESS;
+        } else {
+            status = PAL_STATUS_ERROR_DATA_UNDERFLOW;
+        }
+    } else {
+        fprintf(stderr, "[PAL_DEBUG] nvme_admin_passthru failed. Win32 Error: %lu, NVMe Status: %u\n", GetLastError(), protocol_cmd->ReturnStatus);
+    }
+
+    free(protocol_cmd);
+    return status;
+}
+
+pal_status_t pal_get_nvme_identify_data(const char* device_path, uint8_t* buffer_4k) {
+    if (!device_path || !buffer_4k) {
+        return PAL_STATUS_INVALID_PARAMETER;
+    }
+
+    HANDLE hDevice = CreateFileA(device_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (hDevice == INVALID_HANDLE_VALUE) {
+        return PAL_STATUS_ACCESS_DENIED;
+    }
+
+    NVME_COMMAND cmd_identify = {0};
+    cmd_identify.CDW0.OPC = NVME_ADMIN_COMMAND_IDENTIFY;
+    cmd_identify.NSID = 0;
+    cmd_identify.u.GENERAL.CDW10 = 1; // CNS = 1, Identify Controller
+
+    const ULONG dataLen = 4096;
+    pal_status_t status = nvme_admin_passthru(hDevice, &cmd_identify, buffer_4k, dataLen);
+
+    CloseHandle(hDevice);
+    return status;
+}
+
+pal_status_t pal_get_nvme_error_log(const char* device_path, uint8_t entry_index, NVMeErrorLogEntry* log_entry) {
+    if (!device_path || !log_entry) {
+        return PAL_STATUS_INVALID_PARAMETER;
+    }
+
+    HANDLE hDevice = CreateFileA(device_path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (hDevice == INVALID_HANDLE_VALUE) {
+        return PAL_STATUS_ACCESS_DENIED;
+    }
+
+    NVME_COMMAND cmd_get_log = {0};
+    cmd_get_log.CDW0.OPC = NVME_ADMIN_COMMAND_GET_LOG_PAGE;
+    cmd_get_log.NSID = 0;
+
+    const ULONG dataLen = sizeof(NVMeErrorLogEntry);
+    uint16_t numd = (dataLen / sizeof(DWORD)) - 1;
+    uint64_t lpo = (uint64_t)entry_index * dataLen;
+
+    cmd_get_log.u.GENERAL.CDW10 = (0x01) | (numd << 16);
+    cmd_get_log.u.GENERAL.CDW12 = (uint32_t)lpo;
+    cmd_get_log.u.GENERAL.CDW13 = (uint32_t)(lpo >> 32);
+
+    pal_status_t status = nvme_admin_passthru(hDevice, &cmd_get_log, log_entry, dataLen);
+
+    CloseHandle(hDevice);
+    return status;
+}
+
+PAL_BUS_TYPE pal_get_device_bus_type(const char* device_path) {
+    HANDLE hDevice = CreateFileA(device_path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (hDevice == INVALID_HANDLE_VALUE) {
+        return PAL_BUS_TYPE_UNKNOWN;
+    }
+
+    STORAGE_PROPERTY_QUERY query = {0};
+    query.PropertyId = StorageDeviceProperty;
+    query.QueryType = PropertyStandardQuery;
+
+    STORAGE_DEVICE_DESCRIPTOR desc = {0};
+    DWORD bytesReturned = 0;
+    PAL_BUS_TYPE bus_type = PAL_BUS_TYPE_UNKNOWN;
+
+    if (DeviceIoControl(hDevice, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query), &desc, sizeof(desc), &bytesReturned, NULL) && bytesReturned >= sizeof(desc)) {
+        switch (desc.BusType) {
+            case BusTypeScsi: bus_type = PAL_BUS_TYPE_SCSI; break;
+            case BusTypeAta: bus_type = PAL_BUS_TYPE_ATA; break;
+            case BusTypeSata: bus_type = PAL_BUS_TYPE_SATA; break;
+            case BusTypeNvme: bus_type = PAL_BUS_TYPE_NVME; break;
+            case BusTypeSd: bus_type = PAL_BUS_TYPE_SD; break;
+            case BusTypeUsb: bus_type = PAL_BUS_TYPE_USB; break;
+            default: bus_type = PAL_BUS_TYPE_UNKNOWN; break;
+        }
+    }
+
+    CloseHandle(hDevice);
+    return bus_type;
+}
+
+pal_status_t pal_ensure_directory_exists(const char* path) {
+    DWORD fileAttributes = GetFileAttributesA(path);
+
+    if (fileAttributes == INVALID_FILE_ATTRIBUTES) {
+        if (CreateDirectoryA(path, NULL)) {
+            return PAL_STATUS_SUCCESS;
+        } else {
+            if (GetLastError() == ERROR_ALREADY_EXISTS) {
+                return PAL_STATUS_SUCCESS;
+            }
+            return PAL_STATUS_ERROR_CREATING_DIR;
+        }
+    } else if (fileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+        return PAL_STATUS_SUCCESS;
+    } else {
+        return PAL_STATUS_ERROR_CREATING_DIR;
+    }
+}
+
+bool pal_is_running_as_admin(void) {
+    BOOL is_admin = FALSE;
+    HANDLE token = NULL;
+    TOKEN_ELEVATION elevation;
+    DWORD size;
+
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) {
+        return false; 
+    }
+
+    if (GetTokenInformation(token, TokenElevation, &elevation, sizeof(elevation), &size)) {
+        is_admin = elevation.TokenIsElevated;
+    }
+
+    if (token) {
+        CloseHandle(token);
+    }
+    return is_admin;
+}
+
 #endif // _WIN32
+

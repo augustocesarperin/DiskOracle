@@ -3,6 +3,16 @@
 
 #include <stdbool.h>
 
+typedef int (*command_handler_t)(int argc, char* argv[]);
+
+typedef struct {
+    const char* name;
+    command_handler_t handler;
+} command_t;
+
+// Adicione esta declaração de função
+void print_usage(void);
+
 /**
  * @brief Executes the S.M.A.R.T. data analysis for a specified device.
  *
@@ -29,5 +39,18 @@ int execute_smart_command(const char* device_path);
  * @return int Returns EXIT_SUCCESS (0) on success, or EXIT_FAILURE (1) on error.
  */
 int execute_json_export_command(const char* device_path, const char* output_file);
+
+// Declarações dos Handlers
+int handle_list_drives(int argc, char* argv[]);
+int handle_surface_scan(int argc, char* argv[]);
+int handle_smart(int argc, char* argv[]);
+int handle_smart_json(int argc, char* argv[]);
+int handle_error_log(int argc, char* argv[]);
+int handle_help(int argc, char* argv[]);
+int start_interactive_mode(void);
+
+void handle_error_log_command(const char* device_path);
+
+extern const command_t commands[];
 
 #endif // COMMANDS_H 

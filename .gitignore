@@ -1,91 +1,37 @@
-# =================================================================
-# Arquivos de Build e Compilação (Gerados Automaticamente)
-# =================================================================
 
-# Pasta de build principal (case-insensitive)
-[Bb]uild/
 [Bb]uild*/
-
-# Arquivos gerados pelo CMake
-CMakeFiles/
-cmake_install.cmake
-CMakeCache.txt
-Testing/
-
-# Binários, bibliotecas e objetos compilados
-*.exe
-*.dll
-*.so
-*.a
-*.lib
-*.o
-*.obj
-
-# =================================================================
-# Pastas de Ferramentas e IDEs
-# =================================================================
-
-# Visual Studio Code, JetBrains, Visual Studio
-.vscode/
-.idea/
-.vs/
-*.suo
-*.user
-
-# =================================================================
-# Logs, Relatórios e Arquivos do SO
-# =================================================================
-
-# Relatórios e logs gerados pelo programa
-reports/
-*.log
-
-# Arquivos de sistema (macOS, Windows)
-.DS_Store
-Thumbs.db
-
-# =================================================================
-# Código-fonte que NÃO deve ser monitorado
-# =================================================================
-
-# Pasta com o código-fonte dos testes
-tests/
-
-# Logs
-*.txt
-*.json
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-.vscode/
-.idea/
-.vs/
+[Cc]make*/
+[Dd]ebug/
+[Rr]elease/
+*.vcxproj
+*.vcxproj.filters
+*.sln
 *.suo
 *.user
 *.ncb
 *.sdf
 *.opensdf
-.specstory/
-
-# Ignore build dir
-[Bb]uild/
-[Bb]uild*/
-
-# CMake generated files
-CMakeFiles/
 cmake_install.cmake
 CMakeCache.txt
 Testing/
+DartConfiguration.tcl
+Makefile
+install_manifest.txt
 
-# Project's own test source code
-tests/
+node_modules/
 
-# Visual Studio project files
-*.vcxproj
-*.vcxproj.filters
-*.sln
+logs/
+*.log
+*.txt
+output.*
+log_*.txt
+*.manifest
+
+.vscode/
+.spectory/
+
+.DS_Store
+Thumbs.db
 
 *.exe
 *.dll
@@ -93,4 +39,32 @@ tests/
 *.o
 *.obj
 *.lib
-*.a 
+*.a
+
+reports/
+*.json 
+
+*.log
+*.txt
+output.*
+log_*.txt
+*.manifest
+
+*.bak
+*.copy
+README copy.md
+
+TESTE
+ascii-text-art.txt
+multiple_files
+
+tests/*
+!tests/*.c
+!tests/*.h 
+/build/
+*.log
+*.bin
+*.exe
+
+# Editor backup files
+*~ 

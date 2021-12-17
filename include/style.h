@@ -21,7 +21,8 @@ typedef enum {
     COLOR_BRIGHT_BLUE,
     COLOR_BRIGHT_MAGENTA,
     COLOR_BRIGHT_CYAN,
-    COLOR_BRIGHT_WHITE
+    COLOR_BRIGHT_WHITE,
+    COLOR_DIM
 } term_color_t;
 
 /**

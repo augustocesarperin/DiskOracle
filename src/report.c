@@ -1,24 +1,26 @@
 #include "report.h"
-
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
 #include <stdlib.h>
-#include "predict.h"
+#include <inttypes.h> 
 #include "smart.h"
 #include "pal.h"
 #include "logging.h"
 #include "nvme_hybrid.h"
+#include "style.h"
+#include "info.h"
 
+/*
 static const char* prediction_result_to_string(PredictionResult res) {
     switch (res) {
         case PREDICT_OK: return "OK";
-        case PREDICT_WARNING: return "WARNING";
-        case PREDICT_FAILURE: return "FAILURE";
-        case PREDICT_UNKNOWN: return "UNKNOWN";
-        default: return "N/A";
+        case PREDICT_WARNING: return "Warning";
+        case PREDICT_FAILURE: return "Failure";
+        default: return "Unknown";
     }
 }
+*/
 
 static void print_last_log(FILE *f, const char *format) {
     FILE *log_file = NULL;
@@ -54,138 +56,220 @@ static void print_last_log(FILE *f, const char *format) {
     
     for (int i = 0; i < 5; ++i) if (lines[i]) free(lines[i]);
 }
-
 int report_generate(const char *device_path_in, const struct smart_data *data, const char *format, const char *output_filepath) {
-    if (!device_path_in || !data || !format) return 1;
-
-    char actual_filepath[512];
-    if (output_filepath && output_filepath[0] != '\0') {
-        strncpy_s(actual_filepath, sizeof(actual_filepath), output_filepath, _TRUNCATE);
-    } else {
-        time_t t = time(NULL);
-        struct tm tm_info_s; // Use a stack-allocated struct
-        errno_t err_localtime = localtime_s(&tm_info_s, &t);
-        if (err_localtime != 0) {
-            // Handle error, perhaps log it or return an error code
-            perror("Failed to get local time");
-            return 1; // Or some other appropriate error handling
-        }
-        char timestamp[32];
-        strftime(timestamp, sizeof(timestamp), "%Y%m%d_%H%M%S", &tm_info_s);
-        
-        const char *dev_name_start = strrchr(device_path_in, '/');
-        if (!dev_name_start) dev_name_start = strrchr(device_path_in, '\\');
-        if (!dev_name_start) dev_name_start = device_path_in; else dev_name_start++;
-        
-        snprintf(actual_filepath, sizeof(actual_filepath), "reports/%s_%s.%s", dev_name_start, timestamp, format);
-    }
-
-    FILE *f = NULL;
-    errno_t err_fopen_report = fopen_s(&f, actual_filepath, "w");
-    if (err_fopen_report != 0 || !f) {
-        perror("Failed to open report file");
+    char final_filepath[1024];
+    
+    // Ensure the "reports" directory exists.
+    const char* reports_dir = "reports";
+    if (pal_ensure_directory_exists(reports_dir) != PAL_STATUS_SUCCESS) {
+        fprintf(stderr, "Error: Could not create the 'reports' directory.\n");
         return 1;
     }
 
-    PredictionResult pred_res = predict_failure(device_path_in, data);
-    const char *prediction_str = prediction_result_to_string(pred_res);
-    
-    const char *dev_name_report = strrchr(device_path_in, '/');
-    if (!dev_name_report) dev_name_report = strrchr(device_path_in, '\\');
-    if (!dev_name_report) dev_name_report = device_path_in; else dev_name_report++;
-
-    if (strcmp(format, "json") == 0) {
-        fprintf(f, "{\n");
-        fprintf(f, "  \"device_path\": \"%s\",\n", device_path_in);
-        fprintf(f, "  \"device_name\": \"%s\",\n", dev_name_report);
-        fprintf(f, "  \"report_format\": \"%s\",\n", format);
-        fprintf(f, "  \"prediction_status\": \"%s\"", prediction_str);
-        print_last_log(f, format);
-        fprintf(f, "\n}\n");
-    } else if (strcmp(format, "txt") == 0) {
-        fprintf(f, "Disk Health Report for: %s (%s)\n", dev_name_report, device_path_in);
-        fprintf(f, "Report Format: %s\n", format);
-        fprintf(f, "----------------------------------------------------\n");
-        fprintf(f, "Prediction Status: %s\n", prediction_str);
-        print_last_log(f, format);
-        fprintf(f, "----------------------------------------------------\n");
-    } else if (strcmp(format, "csv") == 0) {
-        fprintf(f, "device_path,device_name,report_format,prediction_status,log1,log2,log3,log4,log5\n");
-        fprintf(f, "\"%s\",\"%s\",\"%s\",\"%s\"", device_path_in, dev_name_report, format, prediction_str);
-        
-        FILE *log_file_csv = NULL;
-        errno_t err_fopen_log_csv = fopen_s(&log_file_csv, "logs/hdguardian.log", "r");
-        if (err_fopen_log_csv == 0 && log_file_csv) {
-            char log_buf_csv[256];
-            int log_count_csv = 0;
-            char *recent_logs[5] = {NULL};
-            while(fgets(log_buf_csv, sizeof(log_buf_csv), log_file_csv) && log_count_csv < 5){
-                char *nl = strrchr(log_buf_csv, '\n'); if (nl) *nl = '\0';
-                nl = strrchr(log_buf_csv, '\r'); if (nl) *nl = '\0';
-                recent_logs[log_count_csv++] = _strdup(log_buf_csv);
-            }
-            for(int k=0; k < log_count_csv; k++) {
-                 fprintf(f, ",\"%s\"", recent_logs[k] ? recent_logs[k] : "");
-                 if(recent_logs[k]) free(recent_logs[k]);
-            }
-            for(int k = log_count_csv; k < 5; k++) {fprintf(f, ",");}
-            fclose(log_file_csv);
+    if (output_filepath && strlen(output_filepath) > 0) {
+        // If a specific path is provided, use it.
+        // We'll place it inside the reports dir for consistency unless it's an absolute path.
+        #ifdef _WIN32
+        if (strchr(output_filepath, ':') != NULL) { // Simple check for absolute path on Windows
+            snprintf(final_filepath, sizeof(final_filepath), "%s", output_filepath);
+        } else {
+            snprintf(final_filepath, sizeof(final_filepath), "%s\\%s", reports_dir, output_filepath);
         }
-        fprintf(f, "\n");
+        #else
+        if (output_filepath[0] == '/') { // Simple check for absolute path on Linux/macOS
+            snprintf(final_filepath, sizeof(final_filepath), "%s", output_filepath);
+        } else {
+            snprintf(final_filepath, sizeof(final_filepath), "%s/%s", reports_dir, output_filepath);
+        }
+        #endif
     } else {
-        fprintf(stderr, "Unsupported report format: %s\n", format);
-        fclose(f);
-        return 2;
+        // Generate a default filename if none is provided.
+        char sanitized_device_path[256];
+        // A simple sanitization: replace backslashes and colons.
+        const char* p_in = device_path_in;
+        char* p_out = sanitized_device_path;
+        while (*p_in && (p_out - sanitized_device_path) < (sizeof(sanitized_device_path) - 1)) {
+            if (*p_in == '\\' || *p_in == ':' || *p_in == '/') {
+                *p_out = '_';
+            } else {
+                *p_out = *p_in;
+            }
+            p_in++;
+            p_out++;
+        }
+        *p_out = '\0';
+
+        time_t now = time(NULL);
+        struct tm* t = localtime(&now);
+        char timestamp[20];
+        strftime(timestamp, sizeof(timestamp), "%Y%m%d%H%M%S", t);
+
+        #ifdef _WIN32
+        snprintf(final_filepath, sizeof(final_filepath), "%s\\diskoracle_report_%s_%s.%s", reports_dir, sanitized_device_path, timestamp, format);
+        #else
+        snprintf(final_filepath, sizeof(final_filepath), "%s/diskoracle_report_%s_%s.%s", reports_dir, sanitized_device_path, timestamp, format);
+        #endif
+    }
+    
+    printf("Generating report at: %s\n", final_filepath);
+
+    FILE* output_stream = fopen(final_filepath, "w");
+    if (!output_stream) {
+        perror("Error opening report file");
+        return 1;
     }
 
-    fclose(f);
-    printf("Report successfully generated: %s\n", actual_filepath);
-    return 0;
+    // Use the single, correct reporting function.
+    // The format is handled internally by report_smart_data, but we pass it for clarity
+    // or potential future use where the function might dispatch based on it.
+    // For now, we assume it generates a text report.
+    int result = report_smart_data(output_stream, device_path_in, (struct smart_data*)data, NULL);
+    
+    fclose(output_stream);
+    
+    if (result == 0) {
+        printf("Report successfully generated.\n");
+    } else {
+        fprintf(stderr, "Failed to generate report.\n");
+    }
+
+    return result;
 }
 
 // Function to display NVMe health alerts
 void report_display_nvme_alerts(const nvme_health_alerts_t *alerts_data) {
     if (!alerts_data || alerts_data->alert_count == 0) {
-        printf("  Nenhum alerta NVMe específico a reportar.\n");
+        printf("  No specific NVMe alerts to report.\n");
         fflush(stdout);
         return;
     }
 
-#ifdef _WIN32
-    printf("\n  +---------------------------------------------------+\n");
-    printf("  | Detalhes dos Alertas NVMe                         |\n");
-    printf("  +---------------------------------------------------+\n");
-#else
-    printf("\n  ┌───────────────────────────────────────────────────┐\n");
-    printf("  │ Detalhes dos Alertas NVMe                         │\n");
-    printf("  ├───────────────────────────────────────────────────┤\n");
-#endif
+    printf("\n  NVMe Alert Details:\n");
+    printf("  -------------------\n");
     for (int i = 0; i < alerts_data->alert_count; ++i) {
         const nvme_alert_info_t* alert = &alerts_data->alerts[i];
-#ifdef _WIN32
-        printf("  | [%s] %-37s |\n",
-               alert->is_critical ? "CRITICO" : "AVISO  ",
+        printf("  [%s] %s\n", 
+               alert->is_critical ? "CRITICAL" : "WARNING ", 
                alert->description);
-        printf("  |    Valor Atual : %-30s |\n", alert->current_value_str);
-        printf("  |    Limiar      : %-30s |\n", alert->threshold_str);
+        printf("    Current Value : %s\n", alert->current_value_str);
+        printf("    Threshold     : %s\n", alert->threshold_str);
         if (i < alerts_data->alert_count - 1) {
-            printf("  +---------------------------------------------------+\n");
+            printf("    ---\n");
         }
-#else
-        printf("  │ [%s] %-37s │\n",
-               alert->is_critical ? "CRITICO" : "AVISO  ",
-               alert->description);
-        printf("  │    Valor Atual : %-30s │\n", alert->current_value_str);
-        printf("  │    Limiar      : %-30s │\n", alert->threshold_str);
-        if (i < alerts_data->alert_count - 1) {
-            printf("  ├───────────────────────────────────────────────────┤\n");
-        }
-#endif
     }
-#ifdef _WIN32
-    printf("  +---------------------------------------------------+\n");
-#else
-    printf("  └───────────────────────────────────────────────────┘\n");
-#endif
     fflush(stdout);
+}
+
+// Helper function to convert 2-byte array (NVMe temperature) to uint16_t
+static uint16_t nvme_temp_to_uint16(const uint8_t temp[2]) {
+    uint16_t val = 0;
+    memcpy(&val, temp, sizeof(uint16_t));
+    return val;
+}
+
+// Helper function to convert 16-byte array (NVMe counter) to uint64_t
+static uint64_t nvme_counter_to_uint64(const uint8_t counter[16]) {
+    uint64_t val = 0;
+    memcpy(&val, counter, sizeof(uint64_t)); // Assuming little-endian
+    return val;
+}
+
+static uint64_t raw_to_uint64(const uint8_t raw[6]) {
+    uint64_t value = 0;
+    for (int i = 0; i < 6; i++) {
+        value |= (uint64_t)raw[i] << (i * 8);
+    }
+    return value;
+}
+
+int report_smart_data(FILE* output_stream, const char *device_path, struct smart_data *data, const char* firmware_rev) {
+    bool use_colors = (output_stream == stdout);
+
+    fprintf(output_stream, "\n### SMART Health Report for %s ###\n", device_path);
+
+    if (data == NULL) {
+        fprintf(output_stream, "  Could not retrieve SMART data.\n");
+        return 1;
+    }
+
+    if (data->is_nvme) {
+        // NVMe-specific report
+        fprintf(output_stream, "Drive Type: NVMe\n\n");
+        fprintf(output_stream, "NVMe SMART Log:\n");
+        fprintf(output_stream, "-------------------------------------------------------------------------------\n");
+        const struct smart_nvme *nvme = &data->data.nvme;
+
+        fprintf(output_stream, "  %-35s : %s\n", "Firmware Revision", firmware_rev ? firmware_rev : "N/A");
+        fprintf(output_stream, "  %-35s : 0x%02X\n", "Critical Warning Flags", nvme->critical_warning);
+
+        uint16_t temp_k = nvme_temp_to_uint16(nvme->temperature);
+        fprintf(output_stream, "  %-35s : %u K (%.1f C)\n", "Temperature", temp_k, (double)temp_k - 273.15);
+        
+        fprintf(output_stream, "  %-35s : %u%%\n", "Available Spare", nvme->avail_spare);
+        fprintf(output_stream, "  %-35s : %u%%\n", "Available Spare Threshold", nvme->spare_thresh);
+        fprintf(output_stream, "  %-35s : %u%%\n", "Percentage Used", nvme->percent_used);
+        
+        fprintf(output_stream, "\n  ~~~ Data Units ~~~\n");
+        fprintf(output_stream, "  %-35s : %" PRIu64 " (x 1000 blocks of 512 bytes)\n", "Data Units Read", nvme_counter_to_uint64(nvme->data_units_read));
+        fprintf(output_stream, "  %-35s : %" PRIu64 " (x 1000 blocks of 512 bytes)\n", "Data Units Written", nvme_counter_to_uint64(nvme->data_units_written));
+        
+        fprintf(output_stream, "\n  ~~~ Command Counts ~~~\n");
+        fprintf(output_stream, "  %-35s : %" PRIu64 "\n", "Host Read Commands", nvme_counter_to_uint64(nvme->host_read_commands));
+        fprintf(output_stream, "  %-35s : %" PRIu64 "\n", "Host Write Commands", nvme_counter_to_uint64(nvme->host_write_commands));
+
+        fprintf(output_stream, "\n  ~~~ Controller Activity ~~~\n");
+        fprintf(output_stream, "  %-35s : %" PRIu64 " minutes\n", "Controller Busy Time", nvme_counter_to_uint64(nvme->controller_busy_time));
+
+        fprintf(output_stream, "\n  ~~~ Power Statistics ~~~\n");
+        fprintf(output_stream, "  %-35s : %" PRIu64 "\n", "Power Cycles", nvme_counter_to_uint64(nvme->power_cycles));
+        fprintf(output_stream, "  %-35s : %" PRIu64 " hours\n", "Power On Hours", nvme_counter_to_uint64(nvme->power_on_hours));
+        fprintf(output_stream, "  %-35s : %" PRIu64 "\n", "Unsafe Shutdowns", nvme_counter_to_uint64(nvme->unsafe_shutdowns));
+        
+        fprintf(output_stream, "\n  ~~~ Error Information ~~~\n");
+        fprintf(output_stream, "  %-35s : %" PRIu64 "\n", "Media and Data Integrity Errors", nvme_counter_to_uint64(nvme->media_errors));
+        fprintf(output_stream, "  %-35s : %" PRIu64 "\n", "Error Information Log Entries", nvme_counter_to_uint64(nvme->num_err_log_entries));
+        fprintf(output_stream, "-------------------------------------------------------------------------------\n");
+
+    } else {
+        fprintf(output_stream, "Drive Type: ATA/SATA\n\n");
+        fprintf(output_stream, "  %-4s %-24s %-8s %-5s %-5s %-6s %-19s %s\n", "ID", "Attribute Name", "Flags", "Value", "Worst", "Thresh", "Raw Value", "Status");
+        fprintf(output_stream, "  -------------------------------------------------------------------------------\n");
+        
+        for (int i = 0; i < data->attr_count; i++) {
+            const struct smart_attr *attr = &data->data.attrs[i];
+            char attr_name_str[30];
+            smart_get_ata_attribute_name(attr->id, attr_name_str, sizeof(attr_name_str));
+
+            uint64_t raw_val = raw_to_uint64(attr->raw);
+            char status_str[15] = "OK"; 
+            
+            if (attr->flags & 0x0001) { // Prefailure attribute
+                if (attr->value <= attr->threshold) {
+                    strcpy(status_str, "Prefail");
+                }
+            }
+
+            fprintf(output_stream, "  %-4u %-24s 0x%04X   %-5u %-5u %-6u %-19" PRIu64 " ",
+                attr->id, attr_name_str, attr->flags, attr->value, attr->worst,
+                attr->threshold, raw_val);
+            
+            if (use_colors) {
+                if (strcmp(status_str, "Prefail") == 0) {
+                    style_set_fg(COLOR_BRIGHT_YELLOW);
+                } else {
+                    style_set_fg(COLOR_BRIGHT_GREEN);
+                }
+            }
+            fprintf(output_stream, "%-10s", status_str);
+            if (use_colors) {
+                style_reset();
+            }
+            fprintf(output_stream, "\n");
+        }
+        fprintf(output_stream, "  -------------------------------------------------------------------------------\n");
+    }
+
+    fprintf(output_stream, "===================== End of Report for %s ======================\n\n", device_path);
+    fflush(output_stream); 
+    return 0;
 }
