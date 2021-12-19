@@ -10,7 +10,6 @@ typedef struct {
     command_handler_t handler;
 } command_t;
 
-// Adicione esta declaração de função
 void print_usage(void);
 
 /**
@@ -40,7 +39,7 @@ int execute_smart_command(const char* device_path);
  */
 int execute_json_export_command(const char* device_path, const char* output_file);
 
-// Declarações dos Handlers
+
 int handle_list_drives(int argc, char* argv[]);
 int handle_surface_scan(int argc, char* argv[]);
 int handle_smart(int argc, char* argv[]);

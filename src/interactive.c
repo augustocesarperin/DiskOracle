@@ -149,12 +149,6 @@ static void run_surface_scan_interactive(const DriveInfo* drive) {
 
     // 5. Exibe o relatório final.
     ui_display_scan_report(&final_scan_state, &basic_info);
-
-    printf("\n\n");
-    style_set_fg(COLOR_MAGENTA);
-    printf("The divination is complete. Press any key to return to the actions menu.");
-    style_reset();
-    pal_wait_for_keypress();
 }
 
 /**
@@ -204,11 +198,11 @@ static interactive_state_t display_action_menu(const DriveInfo* drive) {
         case 1:
             // Chama o nosso novo orquestrador com a UI correta
             run_surface_scan_interactive(drive);
+            pal_wait_for_keypress();
             return STATE_ACTION_SELECTION; // Volta para este menu de ações
         case 2:
             // Agora esta opção chama a função correta
             display_drive_info(drive->device_path);
-            pal_wait_for_keypress();
             return STATE_ACTION_SELECTION;
         default:
             style_set_fg(COLOR_YELLOW);
