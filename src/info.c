@@ -12,8 +12,17 @@
 #ifdef _WIN32
 #include <windows.h> 
 #endif
-#include <errno.h> 
+#include <errno.h>
 
+// Using the correct 'CriticalAttributeRule' struct from 'info.h'.
+// The local, conflicting definition has been removed.
+static const CriticalAttributeRule critical_rules[] = {
+    {5, "Reallocated Sector Count", 0, "This indicates sectors have been reallocated due to read errors. This is a critical warning suggesting drive degradation. Monitor this value closely and backup important data immediately."},
+    {187, "Reported Uncorrectable Errors", 0, "The drive has reported errors that could not be corrected using hardware ECC. This is a sign of surface or mechanical problems. Immediate backup is recommended."},
+    {197, "Current Pending Sector Count", 0, "This shows the number of 'unstable' sectors waiting to be remapped. A non-zero value is a significant warning. The drive may fail soon. Backup data now."},
+    {198, "Offline Uncorrectable Error Count", 0, "This is the count of uncorrectable errors found during offline scans. Any value here indicates a problem with the drive's surface. Backup data and consider drive replacement."},
+    {199, "UDMA CRC Error Count", 0, "This often points to a faulty SATA cable or a poor connection between the drive and the motherboard, causing data transmission errors. Before replacing the drive, try replacing the SATA cable."}
+};
 
 static scan_state_t g_final_scan_state;
 
@@ -142,6 +151,37 @@ void run_surface_scan_command(const char *device_path) {
     ui_display_scan_report(&g_final_scan_state, &drive_info);
 }
 
+// --- Implementation of the new SMART Analysis feature ---
+void run_smart_analysis(FILE* output_stream, const struct smart_data* data) {
+    if (data == NULL || data->is_nvme) {
+        return; // This analysis is for ATA drives only
+    }
+
+    bool has_critical_issues = false;
+    // Check against critical rules
+    for (int i = 0; i < data->attr_count; i++) {
+        const struct smart_attr *attr = &data->data.attrs[i];
+        for (size_t j = 0; j < sizeof(critical_rules) / sizeof(critical_rules[0]); j++) {
+            if (attr->id == critical_rules[j].id) {
+                uint64_t raw_val = raw_to_uint64(attr->raw);
+                if (raw_val > critical_rules[j].threshold) {
+                    if (!has_critical_issues) {
+                        fprintf(output_stream, "\n--- Oracle's Analysis ---\n");
+                        has_critical_issues = true;
+                    }
+                    fprintf(output_stream, "[!] Found potential issue with '%s' (ID %d):\n", critical_rules[j].name, attr->id);
+                    fprintf(output_stream, "    > Recommendation: %s\n", critical_rules[j].recommendation);
+                }
+            }
+        }
+    }
+
+    if (has_critical_issues) {
+        fprintf(output_stream, "-------------------------\n");
+    }
+}
+
+
 void show_drive_smart_info(const char *device_path) {
     if (device_path == NULL) {
         fprintf(stderr, "Error: A device path must be provided.\n");
@@ -161,7 +201,9 @@ void show_drive_smart_info(const char *device_path) {
     if (smart_read(device_path, drive_info.model, drive_info.serial, &s_data) == 0) {
         // Passa o firmware obtido da 'drive_info' para a função de interpretação.
         smart_interpret(device_path, &s_data, drive_info.firmware_rev);
+        // Adiciona a análise crítica logo após a tabela de dados.
+        run_smart_analysis(stdout, &s_data);
     } else {
-        fprintf(stderr, "Error: Could not read S.M.A.R.T. data for %s\n", device_path);
+        fprintf(stderr, "Error: Could not read S.M.A.R.T. data for %s\\n", device_path);
     }
 }

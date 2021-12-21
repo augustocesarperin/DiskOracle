@@ -11,7 +11,6 @@
 
 
 // Unified smart_read function that calls the PAL to get SMART data.
-// The PAL implementation (pal_get_smart_data) will handle platform-specifics.
 int smart_read(const char *device_path, const char* device_model, const char* device_serial, struct smart_data *out) {
 
     if (!device_path || !out) {
@@ -27,10 +26,7 @@ int smart_read(const char *device_path, const char* device_model, const char* de
     return pal_status;
 }
 
-// --- START STATIC UTILITY FUNCTIONS ---
 void smart_get_ata_attribute_name(uint8_t id, char* buffer, int buffer_len) {
-    // Basic implementation
-    // snprintf for safety
     switch (id) {
         case 1:   snprintf(buffer, buffer_len, "Raw_Read_Error_Rate"); break;
         case 2:   snprintf(buffer, buffer_len, "Throughput_Performance"); break;
@@ -61,7 +57,7 @@ void smart_get_ata_attribute_name(uint8_t id, char* buffer, int buffer_len) {
     }
 }
 
-static uint64_t raw_to_uint64(const unsigned char* raw_value) {
+uint64_t raw_to_uint64(const unsigned char* raw_value) {
     uint64_t result = 0;
     for (int i = 0; i < 6; ++i) {
         result |= ((uint64_t)raw_value[i] << (i * 8));
@@ -106,12 +102,10 @@ static uint16_t nvme_temp_to_uint16(const uint8_t temp[2]) {
 
 // Improved smart_interpret function
 int smart_interpret(const char *device_path, struct smart_data *data, const char* firmware_rev) {
-    // The original logic has been moved to report_smart_data.
     // This function now acts as a wrapper to maintain compatibility
     return report_smart_data(stdout, device_path, data, firmware_rev);
 }
 
-// Function to provide a general health summary based on SMART data
 // TODO: This function needs to be  more sophisticated in the future
 SmartStatus smart_get_health_summary(const struct smart_data *data) {
     if (!data) {
@@ -134,7 +128,7 @@ SmartStatus smart_get_health_summary(const struct smart_data *data) {
         if (nvme->critical_warning & 0x08) { // Media is in read-only mode
             nvme_status = SMART_HEALTH_FAILING;
         }
-        if (nvme->critical_warning & 0x10) { // Volatile memory backup device has failed
+        if (nvme->critical_warning & 0x10) { 
             nvme_status = SMART_HEALTH_FAILING;
         }
 

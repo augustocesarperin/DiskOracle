@@ -9,7 +9,7 @@
 #include "logging.h"
 #include "nvme_hybrid.h"
 #include "style.h"
-#include "info.h"
+#include "../include/info.h"
 
 /*
 static const char* prediction_result_to_string(PredictionResult res) {
@@ -174,14 +174,6 @@ static uint64_t nvme_counter_to_uint64(const uint8_t counter[16]) {
     return val;
 }
 
-static uint64_t raw_to_uint64(const uint8_t raw[6]) {
-    uint64_t value = 0;
-    for (int i = 0; i < 6; i++) {
-        value |= (uint64_t)raw[i] << (i * 8);
-    }
-    return value;
-}
-
 int report_smart_data(FILE* output_stream, const char *device_path, struct smart_data *data, const char* firmware_rev) {
     bool use_colors = (output_stream == stdout);
 
@@ -267,6 +259,9 @@ int report_smart_data(FILE* output_stream, const char *device_path, struct smart
             fprintf(output_stream, "\n");
         }
         fprintf(output_stream, "  -------------------------------------------------------------------------------\n");
+        
+        // Run the Oracle's analysis on the data
+        run_smart_analysis(output_stream, data);
     }
 
     fprintf(output_stream, "===================== End of Report for %s ======================\n\n", device_path);

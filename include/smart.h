@@ -109,5 +109,14 @@ SmartStatus smart_get_health_summary(const struct smart_data *data);
 
 void smart_get_ata_attribute_name(uint8_t id, char* buffer, int buffer_len);
 
+/**
+ * @brief Converts the 6-byte raw value array from a S.M.A.R.T. attribute into a 64-bit integer.
+ * 
+ * @param raw_value A pointer to the 6-byte array.
+ * @return The calculated 64-bit integer value.
+ */
+uint64_t raw_to_uint64(const unsigned char* raw_value);
+
+
 #endif // SMART_H
 
