@@ -117,6 +117,14 @@ void smart_get_ata_attribute_name(uint8_t id, char* buffer, int buffer_len);
  */
 uint64_t raw_to_uint64(const unsigned char* raw_value);
 
+/**
+ * @brief Converts the 16-byte counter from an NVMe log into a 64-bit integer.
+ * 
+ * @param counter A pointer to the 16-byte array.
+ * @return The calculated 64-bit integer value.
+ */
+uint64_t nvme_counter_to_uint64(const uint8_t counter[16]);
+
 
 #endif // SMART_H
 

@@ -78,6 +78,17 @@ void show_drive_smart_info(const char *device_path);
 void run_smart_analysis(FILE* output_stream, const struct smart_data* data);
 
 /**
+ * @brief Analyzes NVMe S.M.A.R.T. data and prints recommendations.
+ * 
+ * This function checks critical NVMe log fields like 'critical_warning',
+ * 'percent_used', and 'media_errors' to provide scannable, actionable advice.
+ * 
+ * @param output_stream The file stream to print the analysis to (e.g., stdout).
+ * @param data A pointer to the populated smart_data structure for the drive.
+ */
+void run_nvme_analysis(FILE* output_stream, const struct smart_data* data);
+
+/**
  * @brief Orchestrates the command-line surface scan operation for a device.
  * 
  * This function handles the --surface command. It gets basic drive info,

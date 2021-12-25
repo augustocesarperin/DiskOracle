@@ -167,13 +167,6 @@ static uint16_t nvme_temp_to_uint16(const uint8_t temp[2]) {
     return val;
 }
 
-// Helper function to convert 16-byte array (NVMe counter) to uint64_t
-static uint64_t nvme_counter_to_uint64(const uint8_t counter[16]) {
-    uint64_t val = 0;
-    memcpy(&val, counter, sizeof(uint64_t)); // Assuming little-endian
-    return val;
-}
-
 int report_smart_data(FILE* output_stream, const char *device_path, struct smart_data *data, const char* firmware_rev) {
     bool use_colors = (output_stream == stdout);
 

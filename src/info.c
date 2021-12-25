@@ -151,7 +151,6 @@ void run_surface_scan_command(const char *device_path) {
     ui_display_scan_report(&g_final_scan_state, &drive_info);
 }
 
-// --- Implementation of the new SMART Analysis feature ---
 void run_smart_analysis(FILE* output_stream, const struct smart_data* data) {
     if (data == NULL || data->is_nvme) {
         return; // This analysis is for ATA drives only
@@ -181,6 +180,56 @@ void run_smart_analysis(FILE* output_stream, const struct smart_data* data) {
     }
 }
 
+static void print_nvme_header_once(FILE* output_stream, bool* has_printed) {
+    if (!(*has_printed)) {
+        fprintf(output_stream, "\n--- Oracle's Analysis (NVMe) ---\n");
+        *has_printed = true;
+    }
+}
+
+void run_nvme_analysis(FILE* output_stream, const struct smart_data* data) {
+    if (data == NULL || !data->is_nvme) {
+        return; // This analysis is for NVMe drives only
+    }
+
+    const struct smart_nvme *nvme = &data->data.nvme;
+    bool has_critical_issues = false;
+
+    // 1. Check Critical Warning Flags (Bitmask)
+    if (nvme->critical_warning & 0x01) {
+        print_nvme_header_once(output_stream, &has_critical_issues);
+        fprintf(output_stream, "[!] Available spare space is below threshold. The drive is running out of reserve blocks to replace failing cells.\n");
+    }
+    if (nvme->critical_warning & 0x02) {
+        print_nvme_header_once(output_stream, &has_critical_issues);
+        fprintf(output_stream, "[!] Temperature has exceeded a critical threshold. Check system cooling and airflow to prevent performance throttling or damage.\n");
+    }
+    if (nvme->critical_warning & 0x08) {
+        print_nvme_header_once(output_stream, &has_critical_issues);
+        fprintf(output_stream, "[!] CRITICAL: The drive media has been placed in read-only mode, likely to prevent data loss. Backup all data immediately.\n");
+    }
+
+    // 2. Check Media and Data Integrity Errors
+    uint64_t media_errors = nvme_counter_to_uint64(nvme->media_errors);
+    if (media_errors > 0) {
+        print_nvme_header_once(output_stream, &has_critical_issues);
+        fprintf(output_stream, "[!] The drive has logged %" PRIu64 " media and data integrity errors. This indicates physical surface problems. Backup critical data.\n", media_errors);
+    }
+
+    // 3. Check Percentage Used (Wear Level)
+    if (nvme->percent_used >= 95) {
+        print_nvme_header_once(output_stream, &has_critical_issues);
+        fprintf(output_stream, "[!] Drive wear is high (%u%% used). The SSD is nearing the end of its rated lifespan. Plan for replacement.\n", nvme->percent_used);
+    } else if (nvme->percent_used >= 85) {
+        print_nvme_header_once(output_stream, &has_critical_issues);
+        fprintf(output_stream, "[!] Drive wear is significant (%u%% used). It is advisable to monitor the drive's health more frequently.\n", nvme->percent_used);
+    }
+
+    if (has_critical_issues) {
+        fprintf(output_stream, "----------------------------------\n");
+    }
+}
+
 
 void show_drive_smart_info(const char *device_path) {
     if (device_path == NULL) {
@@ -199,11 +248,14 @@ void show_drive_smart_info(const char *device_path) {
 
     struct smart_data s_data;
     if (smart_read(device_path, drive_info.model, drive_info.serial, &s_data) == 0) {
-        // Passa o firmware obtido da 'drive_info' para a função de interpretação.
         smart_interpret(device_path, &s_data, drive_info.firmware_rev);
-        // Adiciona a análise crítica logo após a tabela de dados.
-        run_smart_analysis(stdout, &s_data);
+        
+        if (s_data.is_nvme) {
+            run_nvme_analysis(stdout, &s_data);
+        } else {
+            run_smart_analysis(stdout, &s_data);
+        }
     } else {
-        fprintf(stderr, "Error: Could not read S.M.A.R.T. data for %s\\n", device_path);
+        fprintf(stderr, "Error: Could not read S.M.A.R.T. data for %s\n", device_path);
     }
 }

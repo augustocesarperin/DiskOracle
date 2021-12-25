@@ -65,6 +65,17 @@ uint64_t raw_to_uint64(const unsigned char* raw_value) {
     return result;
 }
 
+uint64_t nvme_counter_to_uint64(const uint8_t counter[16]) {
+    uint64_t val = 0;
+    memcpy(&val, counter, sizeof(uint64_t)); // Standard interpretation is to read the first 8 bytes (64 bits)
+    return val;
+}
+static uint16_t nvme_temp_to_uint16(const uint8_t temp[2]) {
+    uint16_t val = 0;
+    memcpy(&val, temp, sizeof(uint16_t));
+    return val;
+}
+
 // Helper function to determine if a new attribute entry is "better"
 static bool is_better_attribute_entry(const struct smart_attr *new_attr, const struct smart_attr *old_attr) {
     if (old_attr->id != new_attr->id) {
@@ -87,17 +98,6 @@ static bool is_better_attribute_entry(const struct smart_attr *new_attr, const s
     }
 
     return false; 
-}
-
-static uint64_t nvme_counter_to_uint64(const uint8_t counter[16]) {
-    uint64_t val = 0;
-    memcpy(&val, counter, sizeof(uint64_t));
-    return val;
-}
-static uint16_t nvme_temp_to_uint16(const uint8_t temp[2]) {
-    uint16_t val = 0;
-    memcpy(&val, temp, sizeof(uint16_t));
-    return val;
 }
 
 // Improved smart_interpret function
