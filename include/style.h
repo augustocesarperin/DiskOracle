@@ -3,7 +3,6 @@
 
 #include <stdbool.h>
 
-// Enum para cores básicas para facilitar o uso
 typedef enum {
     COLOR_DEFAULT,
     COLOR_BLACK,

@@ -49,7 +49,6 @@ static void escape_json_string(const char* input, char* output, size_t out_size)
                 break;
             }
         } else {
-            // No escape needed, copy character directly
             if (remaining_size >= 1) {
                 *out_ptr = char_to_escape;
                 out_ptr++;
@@ -234,7 +233,6 @@ int nvme_export_to_json(
     
     time_t now = time(NULL);
     struct tm ptm_utc;
-    // Usar gmtime_s para obter UTC de forma segura
     if (gmtime_s(&ptm_utc, &now) == 0) {
         strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &ptm_utc);
         if (first_section_written) fprintf(outfile, ",");
@@ -244,7 +242,7 @@ int nvme_export_to_json(
         fprintf(outfile, "\n  \"reportGeneratedUtc\": \"N/A\"\n");
     }
 
-    fprintf(outfile, "}\n"); // Fim do objeto JSON principal
+    fprintf(outfile, "}\n");
 
     if (outfile != stdout) {
         fclose(outfile);
@@ -254,7 +252,7 @@ int nvme_export_to_json(
     return PAL_STATUS_SUCCESS;
 }
 
-// Stubs para outros formatos - devem ser implementados em fases futuras (provavelmente nunca)
+// Stubs para outros formatos: devem ser implementados em fases futuras (provavelmente nunca)
 /*
 int nvme_export_to_xml(const char* device_path, const BasicDriveInfo* basic_info, const struct smart_data* sdata, const nvme_health_alerts_t* alerts, const nvme_hybrid_context_t* hybrid_ctx, const char* output_file_path) {
     fprintf(stderr, "[WARN NVME_EXPORT] XML export is not yet implemented.\n");

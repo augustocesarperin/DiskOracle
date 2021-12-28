@@ -45,13 +45,11 @@ void ui_display_error_log_entry(const NVMeErrorLogEntry* log_entry, int entry_nu
 
 void ui_init(void) {
     style_init();
-    // Limpar a tela e esconder o cursor
     printf("\x1b[2J\x1b[?25l");
     fflush(stdout);
 }
 
 void ui_cleanup(void) {
-    // Mostrar o cursor e resetar o estilo
     printf("\x1b[?25h");
     style_reset();
     fflush(stdout);
@@ -64,7 +62,7 @@ void ui_draw_scan_progress(const scan_state_t* state, const BasicDriveInfo* driv
     }
 
     printf("\x1b[H");
-    // --- Título ---
+    // Título
     style_set_bold();
     printf("DiskOracle v1.0 - Surface Scan\n");
     style_reset();
@@ -83,7 +81,7 @@ void ui_draw_scan_progress(const scan_state_t* state, const BasicDriveInfo* driv
     printf("] %.1f%%", percentage * 100.0);
     printf("\n\n"); // Espaço extra
 
-    // --- Estatísticas ---
+    //  Estatísticas
     time_t now = time(NULL);
     double elapsed_seconds = difftime(now, state->start_time);
     double eta_seconds = 0;
@@ -152,12 +150,12 @@ void display_drive_list(const DriveInfo* drives, int count) {
 void ui_display_scan_report(const scan_state_t* state, const BasicDriveInfo* drive_info) {
     if (!state || !drive_info) return;
 
-    // --- Calcula as estatísticas ---
+    // Calcula as estatísticas
     time_t now = time(NULL);
     double total_time = (state->start_time > 0) ? difftime(now, state->start_time) : 0;
     if (total_time < 1.0) total_time = 1.0; // Evita divisão por zero e mostra pelo menos 1 segundo
 
-    // --- Desenha o relatório ---
+    // Desenha o relatório
     printf("\n");
     style_set_fg(COLOR_MAGENTA);
     printf("+-----------------------------------------------------------------------------+\n");

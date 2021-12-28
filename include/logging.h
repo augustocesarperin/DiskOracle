@@ -3,7 +3,7 @@
 
 int log_event(const char *event);
 
-// Debug logging macro
+
 #ifdef DEBUG
     // Temporarily changed to printf (stdout) for visibility testing
     #define DEBUG_PRINT(fmt, ...) printf("[DEBUG] %s:%d:%s(): " fmt "\n", \

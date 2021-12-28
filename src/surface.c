@@ -99,9 +99,9 @@ static int surface_scan_quick(const char *device, SurfaceScanResult *result, sca
     for (int64_t i = 0; i < total_blocks_to_check && offset < device_size; ++i) {
         ssize_t bytes_read = -1;
 #ifdef _WIN32
-        LARGE_INTEGER li_offset;
-        li_offset.QuadPart = offset;
-        DWORD win_bytes_read = 0;
+            LARGE_INTEGER li_offset;
+            li_offset.QuadPart = offset;
+            DWORD win_bytes_read = 0;
         if (SetFilePointerEx(hFile, li_offset, NULL, FILE_BEGIN) && ReadFile(hFile, buf, BUFFER_SIZE, &win_bytes_read, NULL)) {
             bytes_read = win_bytes_read;
         } else {
@@ -116,8 +116,8 @@ static int surface_scan_quick(const char *device, SurfaceScanResult *result, sca
         if (bytes_read > 0 && bytes_read < BUFFER_SIZE) {
             result->bad_sectors_found++;
         } else if (bytes_read < 0) {
-            result->bad_sectors_found++;
-        }
+                result->bad_sectors_found++;
+             }
         
         state.scanned_blocks = i + 1;
         if (bytes_read < 0) {
@@ -254,9 +254,9 @@ static int surface_scan_deep(const char *device, SurfaceScanResult *result) {
     for (int64_t i = 0; i < total_sectors; ++i) {
         ssize_t bytes_read = -1;
 #ifdef _WIN32
-        LARGE_INTEGER li_offset;
-        li_offset.QuadPart = offset;
-        DWORD win_bytes_read = 0;
+            LARGE_INTEGER li_offset;
+            li_offset.QuadPart = offset;
+            DWORD win_bytes_read = 0;
         if (SetFilePointerEx(hFile, li_offset, NULL, FILE_BEGIN) && ReadFile(hFile, buf, BUFFER_SIZE, &win_bytes_read, NULL)) {
             bytes_read = win_bytes_read;
         } else {
@@ -269,11 +269,11 @@ static int surface_scan_deep(const char *device, SurfaceScanResult *result) {
         result->total_sectors_scanned++;
 
         if (bytes_read > 0 && bytes_read < BUFFER_SIZE) {
-            result->bad_sectors_found++;
+                result->bad_sectors_found++;
         } else if (bytes_read < 0) {
             result->bad_sectors_found++;
         }
-        
+
         offset += BUFFER_SIZE;
 
         if (i > 0 && (total_sectors < 100 || i % (total_sectors / 100) == 0 || i == total_sectors - 1)) {

@@ -202,8 +202,8 @@ int main(int argc, char* argv[]) {
         printf("%*s%s\n\n", padding, "", line2);
 
         style_reset();
-        return 1;
-    }
+                return 1;
+            }
 
     clock_t start_time = clock();
 
